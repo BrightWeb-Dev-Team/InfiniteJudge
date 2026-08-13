@@ -69,15 +69,27 @@ async function request<T>(url: string, init: RequestInit = {}) {
       ...init.headers,
     },
   });
-  const data = await res.json();
+  const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || "请求失败");
   return data as T;
 }
 async function upload<T>(url: string, form: FormData) {
   const res = await fetch("/api" + url, { method: "POST", body: form, headers: token() ? { Authorization: `Bearer ${token()}` } : {} });
-  const data = await res.json();
+  const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || "上传失败");
   return data as T;
+}
+async function parseResponse(res: Response) {
+  const text = await res.text();
+  if (!text) return {} as any;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const html = /^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(text);
+    throw new Error(html
+      ? `服务器返回了网页而不是 API 数据（HTTP ${res.status}）。请确认前后端端口及 /api 反向代理配置。`
+      : `服务器返回了无法解析的数据（HTTP ${res.status}）。`);
+  }
 }
 export const api = {
   setupStatus: () => request<{ installed: boolean }>("/setup/status"),
@@ -120,15 +132,16 @@ export const api = {
   deleteFile: (id: number) => request<void>(`/files/${id}`, { method: "DELETE" }),
   downloadFile: async (id: number) => {
     const res = await fetch(`/api/files/${id}/download`, { headers: token() ? { Authorization: `Bearer ${token()}` } : {} });
-    if (!res.ok) { const data = await res.json(); throw new Error(data.error || "下载失败"); }
+    if (!res.ok) { const data = await parseResponse(res); throw new Error(data.error || "下载失败"); }
     return res.blob();
   },
   updatePassword: (body: { currentPassword: string; newPassword: string }) => request<{ ok: boolean }>("/me/password", { method: "PUT", body: JSON.stringify(body) }),
   ranking: () => request<any[]>("/ranking"),
-  hitokoto: () => request<{ text: string; from: string }>("/hitokoto"),
+  hitokoto: () => request<{ text: string; from: string; url: string }>("/hitokoto"),
   messages: () => request<any[]>("/messages"),
-  sendMessage: (body: { recipient: string; content: string }) => request<any>("/messages", { method: "POST", body: JSON.stringify(body) }),
+  sendMessage: (body: { recipientId: number; content: string }) => request<any>("/messages", { method: "POST", body: JSON.stringify(body) }),
   readMessage: (id: number) => request<any>(`/messages/${id}/read`, { method: "PUT" }),
+  readConversation: (uid: number) => request<any>(`/messages/conversation/${uid}/read`, { method: "PUT" }),
   blog: () => request<any[]>("/blog"),
   createBlog: (body: { title: string; content: string }) => request<any>("/blog", { method: "POST", body: JSON.stringify(body) }),
   health: () => request<SystemHealth>("/health"),
@@ -218,6 +231,7 @@ export const api = {
     }),
   deleteProblem: (id: string) =>
     request<void>("/admin/problems/" + id, { method: "DELETE" }),
+  importProblems: (file: File) => { const form = new FormData(); form.append("package", file); return upload<{ inserted: string[]; skipped: string[]; failed: Array<{ directory: string; error: string }>; remoteOnly: boolean }>("/admin/problems/import", form); },
   createContest: (body: any) =>
     request<Contest>("/admin/contests", {
       method: "POST",

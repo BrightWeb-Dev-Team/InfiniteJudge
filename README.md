@@ -11,10 +11,23 @@ Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 ## 中文更新服务协议
 
 点击“一键更新”后，InfiniteJudge 向 `https://update.brightweb.top/oj`
-发送一个不带请求体的 `POST` 请求。更新服务器自行判断并返回当前可用的
-InfiniteJudge 更新包信息。
+发送 `POST` 请求，并通过 JSON 提交当前版本号：
 
-如果当前已经是最新版本，更新服务器返回 HTTP `204`，不需要响应体。
+```json
+{
+  "product": "InfiniteJudge",
+  "version": "1.0.0",
+  "platform": "darwin",
+  "arch": "arm64"
+}
+```
+
+`platform` 和 `arch` 由运行 InfiniteJudge 的 Node.js 环境自动提供。例如
+macOS Apple Silicon 为 `darwin` / `arm64`，Linux x64 为 `linux` / `x64`。
+
+如果当前已经是最新版本，更新服务器返回 HTTP `200` 和
+`{"update":false}`（也兼容 `{"latest":true}` 或返回与当前版本相同的
+`version`）。
 如果存在新版本，更新服务器返回 HTTP `200` 和以下 JSON：
 
 ```json

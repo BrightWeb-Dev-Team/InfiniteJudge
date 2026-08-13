@@ -28,7 +28,7 @@ export function AccountPage({ user, changed, error }: { user: User; changed: (u:
           <div className="profile-avatar">{profile.avatar ? <img src={profile.avatar} alt="当前头像" /> : profile.username[0]?.toUpperCase()}</div>
           <div><b>头像</b><p>支持 JPG、PNG、GIF、WebP，最大 5 MB。</p><input ref={avatarInput} hidden type="file" accept="image/*" onChange={(e) => chooseAvatar(e.target.files?.[0])} /><button type="button" className="secondary" disabled={uploading} onClick={() => avatarInput.current?.click()}><Camera />{uploading ? "上传中..." : "上传头像"}</button></div>
         </div>
-        <label className="field"><span>用户名</span><input required value={profile.username} onChange={(e) => setProfile({ ...profile, username: e.target.value })} /></label>
+        <label className="field"><span>用户名</span><input required minLength={3} maxLength={24} value={profile.username} onChange={(e) => setProfile({ ...profile, username: e.target.value })} /></label>
         <label className="field"><span>个人简介（Markdown）</span><textarea rows={10} maxLength={2000} value={profile.bio} onChange={(e) => setProfile({ ...profile, bio: e.target.value })} placeholder="介绍你的算法方向、学校或近期计划" /></label>
         <div className="bio-preview markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{profile.bio || "简介预览"}</ReactMarkdown></div>
         <button className="primary"><Save />保存资料</button>
@@ -67,9 +67,26 @@ export function FilesPage({ error }: { error: (s: string) => void }) {
 const formatBytes = (size: number) => size < 1024 ? `${size} B` : size < 1048576 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1048576).toFixed(1)} MB`;
 
 export function MessagesPage({ error }: { error: (s: string) => void }) {
-  const [items, setItems] = useState<any[]>([]), [recipient, setRecipient] = useState(""), [content, setContent] = useState("");
-  const load = () => api.messages().then(setItems).catch((e) => error(e.message)); useEffect(() => { void load(); }, []);
-  return <section className="page"><div className="page-title"><span className="kicker">INBOX</span><h1>站内消息</h1><p>与站内用户进行私信交流。</p></div><div className="messages-layout"><form className="settings-panel content-form" onSubmit={async (e) => { e.preventDefault(); try { await api.sendMessage({ recipient, content }); setContent(""); error("消息已发送"); } catch (x: any) { error(x.message); } }}><h2><Plus />新消息</h2><label className="field"><span>收件人用户名</span><input required value={recipient} onChange={(e) => setRecipient(e.target.value)} /></label><label className="field"><span>内容</span><textarea required rows={7} value={content} onChange={(e) => setContent(e.target.value)} /></label><button className="primary"><Send />发送</button></form><div className="message-list">{items.length ? items.map((item) => <article key={item.id} className={item.read_at ? "" : "unread"} onClick={() => { if (!item.read_at) api.readMessage(item.id).then(load); }}><div><b>{item.sender}</b><time>{new Date(item.created_at + "Z").toLocaleString()}</time></div><p>{item.content}</p></article>) : <div className="settings-panel empty"><Mail />暂无站内消息</div>}</div></div></section>;
+  const [me, setMe] = useState<User | null>(null), [items, setItems] = useState<any[]>([]), [active, setActive] = useState<number | null>(null), [newUid, setNewUid] = useState(""), [creating, setCreating] = useState(false), [content, setContent] = useState("");
+  const historyRef = useRef<HTMLDivElement>(null);
+  const load = async () => { try { const [user, messages] = await Promise.all([api.me(), api.messages()]); setMe(user); setItems(messages); } catch (e: any) { error(e.message); } };
+  useEffect(() => { void load(); }, []);
+  const scrollChat = (smooth = false) => requestAnimationFrame(() => {
+    const element = historyRef.current;
+    if (element) element.scrollTo({ top: element.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  });
+  useEffect(() => { if (active) { void api.readConversation(active).then(() => load().then(() => scrollChat())); } }, [active]);
+  const conversations = me ? [...new Set(items.map((m) => m.sender_id === me.id ? m.recipient_id : m.sender_id))].map((uid) => {
+    const rows = items.filter((m) => m.sender_id === uid || m.recipient_id === uid), last = rows[rows.length - 1], incoming = last.sender_id === uid;
+    return { uid, name: incoming ? last.sender : last.recipient, avatar: incoming ? last.sender_avatar : last.recipient_avatar, last, unread: rows.filter((m) => m.sender_id === uid && !m.read_at).length };
+  }).sort((a, b) => b.last.id - a.last.id) : [];
+  const chat = active ? items.filter((m) => m.sender_id === active || m.recipient_id === active) : [], peer = conversations.find((x) => x.uid === active);
+  const send = async (e: React.FormEvent) => { e.preventDefault(); const uid = active || Number(newUid); if (!Number.isInteger(uid) || uid < 1) return error("请输入有效 UID"); try { await api.sendMessage({ recipientId: uid, content }); setActive(uid); setNewUid(""); setContent(""); await load(); scrollChat(true); } catch (x: any) { error(x.message); } };
+  const begin = (e: React.FormEvent) => { e.preventDefault(); const uid = Number(newUid); if (!Number.isInteger(uid) || uid < 1) return error("请输入有效 UID"); if (uid === me?.id) return error("不能给自己发消息"); setActive(uid); setCreating(false); };
+  return <section className="page messages-page"><div className="wechat-shell">
+    <aside className="conversation-list"><div className="conversation-create">{creating ? <form onSubmit={begin}><input autoFocus type="number" min="1" placeholder="输入 UID" value={newUid} onChange={(e) => setNewUid(e.target.value)} /><button className="icon" title="确认"><Send /></button></form> : <button className="primary" onClick={() => setCreating(true)}><Plus />创建</button>}</div>{conversations.map((c) => <button key={c.uid} className={active === c.uid ? "active" : ""} onClick={() => setActive(c.uid)}><span><b>{c.name}</b><small>{c.last.content}</small></span>{c.unread > 0 && <i>{c.unread}</i>}</button>)}</aside>
+    <main className="chat-panel">{active ? <><header><b>{peer?.name || `UID ${active}`} <small>(UID: {active})</small></b></header><div className="chat-history" ref={historyRef}>{chat.map((m) => { const mine = m.sender_id === me?.id; return <div key={m.id} className={`chat-message ${mine ? "mine" : "theirs"}`}><span className="chat-avatar">{(mine ? me?.avatar : m.sender_avatar) ? <img src={(mine ? me?.avatar : m.sender_avatar)} /> : (mine ? me?.username : m.sender)?.[0]}</span><div><p>{m.content}</p><time>{new Date(m.created_at + "Z").toLocaleString()}</time></div></div>; })}</div><form className="chat-compose" onSubmit={send}><textarea required maxLength={4000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="输入消息" onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} /><button className="icon" title="发送"><Send /></button></form></> : <div className="chat-empty"><Mail /><b>选择一个会话</b><span>点击左侧“创建”，使用 UID 发起对话</span></div>}</main>
+  </div></section>;
 }
 
 export function BlogPage({ user, error }: { user: User | null; error: (s: string) => void }) {

@@ -344,7 +344,7 @@ function App() {
         .me()
         .then(async (value) => {
           setUser(value);
-          if (["settings", "domains"].includes(initialRoute.page) && value.role === "admin") {
+          if (initialRoute.page === "settings" && value.role === "admin") {
             let valid = adminVerified;
             if (valid) {
               try { await api.adminVerification(); }
@@ -356,9 +356,7 @@ function App() {
               }
             }
             if (!valid) {
-            setAdminTarget(
-              initialRoute.page === "domains" ? "domains" : "settings",
-            );
+            setAdminTarget("settings");
             setAdminVerifyOpen(true);
             }
           }
@@ -388,7 +386,7 @@ function App() {
     api.messages().then((items) => setUnread(items.filter((item) => !item.read_at).length)).catch(() => {});
   }, [user, page]);
   useEffect(() => {
-    if (user?.role !== "admin" || !["settings", "domains"].includes(page))
+    if (user?.role !== "admin" || page !== "settings")
       return;
     const expires = Number(
         sessionStorage.getItem("ij-admin-verification-expires"),
@@ -396,7 +394,7 @@ function App() {
       delay = expires - Date.now();
     if (!adminVerified || delay <= 0) {
       setAdminVerified(false);
-      setAdminTarget(page === "domains" ? "domains" : "settings");
+      setAdminTarget("settings");
       setAdminVerifyOpen(true);
       return;
     }
@@ -404,14 +402,14 @@ function App() {
       sessionStorage.removeItem("ij-admin-verification");
       sessionStorage.removeItem("ij-admin-verification-expires");
       setAdminVerified(false);
-      setAdminTarget(page === "domains" ? "domains" : "settings");
+      setAdminTarget("settings");
       setAdminVerifyOpen(true);
     }, delay);
     return () => clearTimeout(timer);
   }, [page, user, adminVerified]);
   const go = async (p: Exclude<Page, "problem" | "profile">) => {
     if (
-      ["settings", "domains"].includes(p) &&
+      p === "settings" &&
       user?.role === "admin"
     ) {
       let verified = adminVerified;
@@ -426,7 +424,7 @@ function App() {
         }
       }
       if (!verified) {
-        setAdminTarget(p === "domains" ? "domains" : "settings");
+        setAdminTarget("settings");
         setAdminVerifyOpen(true);
         setMobile(false);
         return;
@@ -674,7 +672,7 @@ function App() {
         <AdminVerifyModal
           close={() => {
             setAdminVerifyOpen(false);
-            if (["settings", "domains"].includes(page)) go("home");
+            if (page === "settings") go("home");
           }}
           done={(expiresAt) => {
             setAdminVerified(true);
@@ -784,8 +782,8 @@ function RpRanking({ compact = false, openProfile }: { compact?: boolean; openPr
   return <div className={compact ? "rp-board compact" : "rp-board"}><div className="rp-head"><span>排名</span><span>用户</span><span>通过</span><span>RP</span></div>{rows.slice(0, compact ? 8 : 100).map((row, index) => <button type="button" className="rp-row" key={row.id} onClick={() => openProfile?.(row.id)}><b>{index + 1}</b><span className="rp-user">{row.avatar ? <img src={row.avatar} /> : <i>{row.username[0].toUpperCase()}</i>}{row.username}</span><span>{row.solved}</span><strong>{row.rp}</strong></button>)}</div>;
 }
 function Hitokoto() {
-  const [quote, setQuote] = useState({ text: "正在获取一言...", from: "" });
-  useEffect(() => { api.hitokoto().then(setQuote).catch(() => setQuote({ text: "我之所以想变强，是为了活得轻松写意。", from: "Infinite Judge" })); }, []);
+  const [quote, setQuote] = useState({ text: "正在获取一言...", from: "", url: "https://hitokoto.cn" });
+  useEffect(() => { api.hitokoto().then(setQuote).catch(() => setQuote({ text: "我之所以想变强，是为了活得轻松写意。", from: "Infinite Judge", url: "https://hitokoto.cn" })); }, []);
   return <section className="hitokoto"><h2>一言</h2><blockquote>{quote.text}</blockquote>{quote.from && <cite>— {quote.from}</cite>}</section>;
 }
 function OperationsPage({
@@ -954,9 +952,12 @@ function AuthModal({
           用户名
           <input
             autoFocus
+            required
+            minLength={3}
+            maxLength={24}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="3-24 位字母、数字或下划线"
+            placeholder="3-24 个中文、字母、数字或下划线字符"
           />
         </label>
         <label>

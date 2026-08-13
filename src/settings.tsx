@@ -34,7 +34,14 @@ export function SettingsPage({ error, changed }: { error: (s: string) => void; c
   async function update() {
     if (!confirm("将从 BrightWeb 更新服务器下载、校验并安装最新版本，继续吗？")) return;
     setUpdating(true); setLogs([]);
-    try { setLogs((await api.updateSystem()).logs); } catch (e: any) { error(e.message); } finally { setUpdating(false); }
+    try {
+      const result = await api.updateSystem();
+      setLogs(result.logs);
+      if (result.version) {
+        sessionStorage.setItem("ij-update-result", `InfiniteJudge 已更新至 v${result.version}`);
+        window.location.reload();
+      }
+    } catch (e: any) { error(e.message); } finally { setUpdating(false); }
   }
   const numberField = (group: string, key: string, label: string) => <Field label={label}><input type="number" value={advanced[group][key]} onChange={(e) => setGroup(group, key, +e.target.value)} /></Field>;
   return <section className="page settings-page">

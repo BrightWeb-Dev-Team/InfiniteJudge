@@ -22,6 +22,7 @@ import { mkdirSync, rmSync, mkdtempSync, readFileSync, writeFileSync, readdirSyn
 import { extname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 const app = express(),
   root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const localVersion = (() => {
@@ -42,11 +43,15 @@ const fileUpload = multer({
   storage: multer.diskStorage({ destination: fileRoot, filename: (_, file, done) => done(null, `${randomUUID()}${safeExtension(file.originalname)}`) }),
   limits: { fileSize: 20 * 1024 * 1024 },
 });
+const problemPackageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 const setting = (key, fallback = null) => {
   const row = db.prepare("SELECT value FROM system_settings WHERE key=?").get(key);
   return row ? JSON.parse(row.value) : fallback;
 };
 const installed = () => Boolean(setting("installed", false));
+const normalizeUsername = (value) => String(value || "").trim().normalize("NFC");
+const validUsername = (value) => /^[\p{L}\p{N}_]{3,24}$/u.test(normalizeUsername(value));
+const usernameHint = "用户名须为 3-24 个中文、字母、数字或下划线字符";
 const primaryDomain = () => db.prepare("SELECT id,announcement FROM domains ORDER BY id LIMIT 1").get();
 const calculateRp = () => {
   const users = db.prepare("SELECT id,username,avatar,rp fixed_rp FROM users").all();
@@ -67,9 +72,10 @@ const calculateRp = () => {
 app.get("/api/setup/status", (_, res) => res.json({ installed: installed() }));
 app.post("/api/setup", async (req, res) => {
   if (installed()) return res.status(409).json({ error: "系统已经完成安装" });
-  const { name, serviceUrl, logo = "", username, password, emailVerification = false, smtp = {} } = req.body;
-  if (!name?.trim() || !/^[a-zA-Z0-9_]{3,24}$/.test(username || "") || String(password || "").length < 8)
-    return res.status(400).json({ error: "请填写品牌名、有效管理员用户名和至少 8 位密码" });
+  const { name, serviceUrl, logo = "", password, emailVerification = false, smtp = {} } = req.body;
+  const username = normalizeUsername(req.body.username);
+  if (!name?.trim() || !validUsername(username) || String(password || "").length < 8)
+    return res.status(400).json({ error: `请填写品牌名、${usernameHint}，并设置至少 8 位密码` });
   try { new URL(serviceUrl); if (logo) new URL(logo); } catch { return res.status(400).json({ error: "服务地址或 Logo URL 无效" }); }
   if (emailVerification && (!smtp.host || !smtp.port || !smtp.from))
     return res.status(400).json({ error: "启用邮件验证后必须填写 SMTP 主机、端口和发件人" });
@@ -147,8 +153,8 @@ app.get("/api/hitokoto", async (_, res) => {
     const response = await fetch("https://v1.hitokoto.cn/?encode=json", { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error("hitokoto unavailable");
     const value = await response.json();
-    res.json({ text: value.hitokoto, from: value.from || "一言" });
-  } catch { res.json({ text: "我之所以想变强，是为了活得轻松写意。", from: "Infinite Judge" }); }
+    res.json({ text: value.hitokoto, from: value.from || "一言", url: "https://hitokoto.cn" });
+  } catch { res.json({ text: "我之所以想变强，是为了活得轻松写意。", from: "Infinite Judge", url: "https://hitokoto.cn" }); }
 });
 app.get("/api/plugins", (_, res) =>
   res.json({
@@ -177,11 +183,12 @@ app.post("/api/auth/email-code", async (req, res) => {
   } catch { res.status(502).json({ error: "邮件发送失败，请检查 SMTP 配置" }); }
 });
 app.post("/api/auth/register", (req, res) => {
-  const { username = "", password = "", email = "", code = "" } = req.body;
-  if (!/^[a-zA-Z0-9_]{3,24}$/.test(username))
+  const { password = "", email = "", code = "" } = req.body;
+  const username = normalizeUsername(req.body.username);
+  if (!validUsername(username))
     return res
       .status(400)
-      .json({ error: "用户名须为 3-24 位字母、数字或下划线" });
+      .json({ error: usernameHint });
   if (password.length < 8)
     return res.status(400).json({ error: "密码至少 8 位" });
   const emailConfig = setting("email", {}), normalizedEmail = String(email).trim().toLowerCase();
@@ -199,14 +206,18 @@ app.post("/api/auth/register", (req, res) => {
       token,
       user: { id: Number(r.lastInsertRowid), username, role: "user", avatar: "", rp: 0 },
     });
-  } catch {
-    return res.status(409).json({ error: "用户名已存在" });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.includes("users.username")) return res.status(409).json({ error: "用户名已存在" });
+    if (message.includes("users.email") || message.includes("users_email_unique")) return res.status(409).json({ error: "邮箱已被注册" });
+    console.error("register failed", error);
+    return res.status(500).json({ error: "注册失败，请检查服务器数据库配置" });
   }
 });
 app.post("/api/auth/login", (req, res) => {
   const user = db
     .prepare("SELECT * FROM users WHERE username=?")
-    .get(req.body.username || "");
+    .get(normalizeUsername(req.body.username));
   if (!user || !verifyPassword(req.body.password || "", user.password_hash))
     return res.status(401).json({ error: "用户名或密码错误" });
   res.json({
@@ -216,8 +227,8 @@ app.post("/api/auth/login", (req, res) => {
 });
 app.get("/api/me", auth, (req, res) => res.json(req.user));
 app.put("/api/me/profile", auth, (req, res) => {
-  const username = String(req.body.username || "").trim(), avatar = String(req.body.avatar || "").trim(), bio = String(req.body.bio || "").trim();
-  if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) return res.status(400).json({ error: "用户名须为 3-24 位字母、数字或下划线" });
+  const username = normalizeUsername(req.body.username), avatar = String(req.body.avatar || "").trim(), bio = String(req.body.bio || "").trim();
+  if (!validUsername(username)) return res.status(400).json({ error: usernameHint });
   try { if (avatar && !avatar.startsWith("/api/public/avatar/")) new URL(avatar); } catch { return res.status(400).json({ error: "头像 URL 无效" }); }
   try {
     db.prepare("UPDATE users SET username=?,avatar=?,bio=? WHERE id=?").run(username, avatar, bio.slice(0, 2000), req.user.id);
@@ -276,15 +287,27 @@ app.get("/api/users/:id", (req, res) => {
   user.blog = db.prepare("SELECT id,title,content,created_at FROM blog_posts WHERE user_id=? ORDER BY id DESC").all(req.params.id);
   res.json(user);
 });
-app.get("/api/messages", auth, (req, res) => res.json(db.prepare("SELECT m.id,m.content,m.read_at,m.created_at,s.id sender_id,s.username sender FROM messages m JOIN users s ON s.id=m.sender_id WHERE recipient_id=? ORDER BY m.id DESC").all(req.user.id)));
+app.get("/api/messages", auth, (req, res) => res.json(db.prepare(`
+  SELECT m.id,m.sender_id,m.recipient_id,m.content,m.read_at,m.created_at,
+    s.username sender,s.avatar sender_avatar,r.username recipient,r.avatar recipient_avatar
+  FROM messages m JOIN users s ON s.id=m.sender_id JOIN users r ON r.id=m.recipient_id
+  WHERE m.sender_id=? OR m.recipient_id=? ORDER BY m.id
+`).all(req.user.id, req.user.id)));
 app.post("/api/messages", auth, (req, res) => {
-  const recipient = db.prepare("SELECT id FROM users WHERE username=?").get(String(req.body.recipient || "").trim()), content = String(req.body.content || "").trim();
+  const recipientId = Number(req.body.recipientId), recipient = Number.isInteger(recipientId) && recipientId > 0
+    ? db.prepare("SELECT id,username,avatar FROM users WHERE id=?").get(recipientId)
+    : null, content = String(req.body.content || "").trim();
   if (!recipient) return res.status(404).json({ error: "收件人不存在" });
+  if (recipient.id === req.user.id) return res.status(400).json({ error: "不能给自己发消息" });
   if (!content || content.length > 4000) return res.status(400).json({ error: "消息内容须为 1-4000 个字符" });
   const result = db.prepare("INSERT INTO messages(sender_id,recipient_id,content) VALUES(?,?,?)").run(req.user.id, recipient.id, content);
-  res.status(201).json({ id: Number(result.lastInsertRowid) });
+  res.status(201).json({ id: Number(result.lastInsertRowid), recipient });
 });
 app.put("/api/messages/:id/read", auth, (req, res) => { db.prepare("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE id=? AND recipient_id=?").run(req.params.id, req.user.id); res.json({ ok: true }); });
+app.put("/api/messages/conversation/:uid/read", auth, (req, res) => {
+  db.prepare("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=? AND recipient_id=? AND read_at IS NULL").run(req.params.uid, req.user.id);
+  res.json({ ok: true });
+});
 app.get("/api/blog", (_, res) => res.json(db.prepare("SELECT b.id,b.title,b.content,b.created_at,b.updated_at,u.username,u.avatar FROM blog_posts b JOIN users u ON u.id=b.user_id ORDER BY b.id DESC").all()));
 app.post("/api/blog", auth, (req, res) => {
   const title = String(req.body.title || "").trim(), content = String(req.body.content || "").trim();
@@ -306,14 +329,14 @@ app.post("/api/admin/verify", admin, (req, res) => {
 app.get("/api/admin/verification", elevatedAdmin, (req, res) =>
   res.json({ valid: true }),
 );
-app.get("/api/admin/users", elevatedAdmin, (_, res) =>
+app.get("/api/admin/users", admin, (_, res) =>
   res.json(
     db
       .prepare("SELECT id,username,role,created_at FROM users ORDER BY id")
       .all(),
   ),
 );
-app.put("/api/admin/users/:id/role", elevatedAdmin, (req, res) => {
+app.put("/api/admin/users/:id/role", admin, (req, res) => {
   if (!["user", "admin"].includes(req.body.role))
     return res.status(400).json({ error: "角色无效" });
   const target = db
@@ -333,7 +356,7 @@ app.put("/api/admin/users/:id/role", elevatedAdmin, (req, res) => {
   );
   res.json({ id: Number(req.params.id), role: req.body.role });
 });
-app.post("/api/admin/users/import", elevatedAdmin, (req, res) => {
+app.post("/api/admin/users/import", admin, (req, res) => {
   const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
   if (!rows.length || rows.length > 500)
     return res.status(400).json({ error: "请提供 1-500 个用户" });
@@ -343,9 +366,9 @@ app.post("/api/admin/users/import", elevatedAdmin, (req, res) => {
     created = [],
     failed = [];
   for (const row of rows) {
-    const username = String(row.username || "").trim(),
+    const username = normalizeUsername(row.username),
       password = String(row.password || "");
-    if (!/^[a-zA-Z0-9_]{3,24}$/.test(username) || password.length < 8) {
+    if (!validUsername(username) || password.length < 8) {
       failed.push({ username, error: "格式错误或密码少于 8 位" });
       continue;
     }
@@ -358,6 +381,45 @@ app.post("/api/admin/users/import", elevatedAdmin, (req, res) => {
   }
   res.json({ created, failed });
 });
+app.post("/api/admin/problems/import", admin, problemPackageUpload.single("package"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "请选择 ZIP 题目包" });
+  const work = mkdtempSync(resolve(tmpdir(), "infinitejudge-import-"));
+  const archive = resolve(work, "problems.zip"), output = resolve(work, "content");
+  try {
+    writeFileSync(archive, req.file.buffer);
+    mkdirSync(output);
+    execFileSync("unzip", ["-qq", archive, "-d", output], { timeout: 30000 });
+    const dirs = readdirSync(output, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    const inserted = [], skipped = [], failed = [];
+    const section = (markdown, title) => {
+      const match = markdown.match(new RegExp(`(?:^|\\n)#{1,3}\\s*${title}\\s*\\n([\\s\\S]*?)(?=\\n#{1,3}\\s|$)`, "i"));
+      return match?.[1]?.trim() || "无";
+    };
+    const scalar = (yaml, key) => yaml.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim().replace(/^['"]|['"]$/g, "") || "";
+    const insert = db.prepare(`INSERT INTO problems(id,title,difficulty,tags,time_limit,memory_limit,description,input_format,output_format,sample_input,sample_output,testcases) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+    for (const entry of dirs) {
+      try {
+        const base = resolve(output, entry.name), yamlPath = resolve(base, "problem.yaml"), markdownPath = resolve(base, "problem_zh.md"), configPath = resolve(base, "testdata/config.yaml");
+        if (!statSync(yamlPath).isFile() || !statSync(markdownPath).isFile()) continue;
+        const yaml = readFileSync(yamlPath, "utf8"), markdown = readFileSync(markdownPath, "utf8"), config = readFileSync(configPath, "utf8");
+        const id = scalar(yaml, "pid") || entry.name, title = scalar(yaml, "title") || id;
+        if (!/^[A-Za-z0-9_-]{1,24}$/.test(id)) throw new Error("题号格式无效");
+        if (db.prepare("SELECT 1 FROM problems WHERE id=?").get(id)) { skipped.push(id); continue; }
+        const remote = scalar(config, "type") === "remote_judge", subtype = scalar(config, "subType");
+        const tagLines = [...yaml.matchAll(/^\s*-\s+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
+        const tags = [...new Set([...tagLines, ...(remote ? ["远程评测", subtype].filter(Boolean) : [])])].slice(0, 12);
+        const time = Number((scalar(config, "time").match(/\d+/) || [1000])[0]);
+        const memory = Number((scalar(config, "memory").match(/\d+/) || [256])[0]);
+        const background = section(markdown, "题目背景"), description = section(markdown, "题目描述");
+        insert.run(id, title, "入门", JSON.stringify(tags), time, memory, background === "无" ? description : `${background}\n\n${description}`, section(markdown, "输入格式"), section(markdown, "输出格式"), section(markdown, "样例输入"), section(markdown, "样例输出"), JSON.stringify([["", ""]]));
+        inserted.push(id);
+      } catch (error) { failed.push({ directory: entry.name, error: error.message }); }
+    }
+    res.json({ inserted, skipped, failed, remoteOnly: inserted.length > 0 });
+  } catch (error) {
+    res.status(400).json({ error: `题目包解析失败：${error.message}` });
+  } finally { rmSync(work, { recursive: true, force: true }); }
+});
 app.get("/api/domains", auth, (req, res) =>
   res.json(
     db
@@ -367,7 +429,7 @@ app.get("/api/domains", auth, (req, res) =>
       .all(),
   ),
 );
-app.post("/api/domains", elevatedAdmin, (req, res) => {
+app.post("/api/domains", admin, (req, res) => {
   const slug = String(req.body.slug || "").trim(),
     name = String(req.body.name || "").trim();
   if (!/^[a-z0-9-]{2,32}$/.test(slug) || !name || name.length > 50)
@@ -406,7 +468,7 @@ app.get("/api/domains/:id", auth, (req, res) => {
       : [];
   res.json(d);
 });
-app.put("/api/domains/:id", elevatedAdmin, (req, res) => {
+app.put("/api/domains/:id", admin, (req, res) => {
   const name = String(req.body.name || "").trim(),
     avatar = String(req.body.avatar || "").trim(),
     announcement = String(req.body.announcement || ""),
@@ -459,7 +521,7 @@ app.post("/api/domains/:id/apply", auth, (req, res) => {
 });
 app.put(
   "/api/domains/:domainId/applications/:id",
-  elevatedAdmin,
+  admin,
   (req, res) => {
     if (!["approved", "rejected"].includes(req.body.status))
       return res.status(400).json({ error: "状态无效" });
@@ -478,7 +540,7 @@ app.put(
     res.json({ ok: true });
   },
 );
-app.put("/api/domains/:domainId/members/:userId", elevatedAdmin, (req, res) => {
+app.put("/api/domains/:domainId/members/:userId", admin, (req, res) => {
   if (!["member", "manager"].includes(req.body.role))
     return res.status(400).json({ error: "角色无效" });
   const r = db
@@ -488,7 +550,7 @@ app.put("/api/domains/:domainId/members/:userId", elevatedAdmin, (req, res) => {
     .run(req.body.role, req.params.domainId, req.params.userId);
   res.json({ ok: !!r.changes });
 });
-app.post("/api/admin/maintenance/:action", elevatedAdmin, (req, res) => {
+app.post("/api/admin/maintenance/:action", admin, (req, res) => {
   const actions = {
     cleanSessions: () =>
       db.prepare("DELETE FROM sessions WHERE expires_at<=?").run(Date.now())
@@ -585,10 +647,26 @@ app.post("/api/admin/system/update", elevatedAdmin, async (req, res) => {
     p.on("error", (e) => resolve({ code: 127, out: e.message }));
   });
   try {
-    const manifestResponse = await fetch(origin, { method: "POST", headers: { Accept: "application/json" } });
-    if (manifestResponse.status === 204) return res.json({ ok: true, origin, logs: ["当前已是最新版本"] });
+    const manifestResponse = await fetch(origin, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        product: "InfiniteJudge",
+        version: localVersion,
+        platform: process.platform,
+        arch: process.arch,
+      }),
+    });
     if (!manifestResponse.ok) throw new Error(`更新服务返回 HTTP ${manifestResponse.status}`);
-    const manifest = await manifestResponse.json();
+    const responseText = await manifestResponse.text();
+    let manifest;
+    try {
+      manifest = JSON.parse(responseText);
+    } catch {
+      throw new Error("更新服务返回的不是有效 JSON");
+    }
+    if (manifest.update === false || manifest.latest === true || manifest.version === localVersion)
+      return res.json({ ok: true, origin, version: localVersion, logs: ["当前已是最新版本"] });
     if (!manifest.version || !manifest.url || !/^[a-f0-9]{64}$/i.test(manifest.sha256 || "")) throw new Error("更新清单缺少 version、url 或有效的 sha256");
     const packageResponse = await fetch(new URL(manifest.url, origin));
     if (!packageResponse.ok) throw new Error(`下载更新包失败：HTTP ${packageResponse.status}`);
@@ -744,6 +822,10 @@ app.post("/api/submissions", auth, (req, res) => {
   res.status(202).json({ id: Number(r.lastInsertRowid), status: "Pending" });
 });
 if (process.env.NODE_ENV === "production") {
+  // Keep unknown API calls JSON; otherwise the SPA fallback returns index.html.
+  app.use("/api", (req, res) => {
+    res.status(404).json({ error: "API 接口不存在", path: req.path });
+  });
   app.use(express.static(resolve(root, "dist")));
   app.get("*", (_, res) => res.sendFile(resolve(root, "dist/index.html")));
 }

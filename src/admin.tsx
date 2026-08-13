@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Contest, Problem } from "./api";
-import { Edit3, Plus, Trash2, X } from "lucide-react";
+import { Edit3, Plus, Trash2, Upload, X } from "lucide-react";
 export const emptyProblem = {
   id: "",
   title: "",
@@ -121,6 +121,20 @@ export function AdminPage({
             <Plus />
             创建题目
           </button>
+          <label className="secondary add-btn problem-import-btn">
+            <Upload />
+            导入题目包
+            <input type="file" accept=".zip,application/zip" hidden onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              try {
+                const result = await api.importProblems(file);
+                alert(`导入完成：新增 ${result.inserted.length} 题，跳过 ${result.skipped.length} 题，失败 ${result.failed.length} 题。${result.remoteOnly ? "\n该包为远程评测题库，需要对应评测插件才能实际评测。" : ""}`);
+                reload();
+              } catch (e: any) { error(e.message); }
+              event.target.value = "";
+            }} />
+          </label>
           {problems.map((p) => (
             <article key={p.id}>
               <div>

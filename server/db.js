@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS domains(id INTEGER PRIMARY KEY AUTOINCREMENT,slug TEX
 CREATE TABLE IF NOT EXISTS domain_members(domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,role TEXT NOT NULL DEFAULT 'member',joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(domain_id,user_id));
 CREATE TABLE IF NOT EXISTS domain_applications(id INTEGER PRIMARY KEY AUTOINCREMENT,domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,message TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(domain_id,user_id));
 CREATE INDEX IF NOT EXISTS submission_created ON submissions(created_at DESC);`);
-try { db.exec("ALTER TABLE users ADD COLUMN email TEXT UNIQUE"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
+try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL AND email <> ''"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN rp INTEGER NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''"); } catch {}
