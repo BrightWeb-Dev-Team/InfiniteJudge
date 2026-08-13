@@ -1,4 +1,4 @@
-# Infinte Judge
+# InfinteJudge
 
 Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 
