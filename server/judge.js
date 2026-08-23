@@ -52,10 +52,18 @@ export async function runSubmission(sub) {
           { error: (c.err || c.out).slice(0, 3000) },
         ]);
     }
+    let spjCommand = null;
+    if (p.spj_enabled) {
+      await writeFile(join(dir, "SpecialJudge.cpp"), p.spj_source);
+      const spjCompile = await runSandbox({ command: "g++", args: ["SpecialJudge.cpp", "-O2", "-std=c++20", "-o", "SpecialJudge"], cwd: dir, timeout: 30000, sandbox: false });
+      if (spjCompile.code) return finish(sub.id, "System Error", 0, spjCompile.ms, 0, [{ error: `Special Judge 编译失败：${(spjCompile.err || spjCompile.out).slice(0, 3000)}` }]);
+      spjCommand = executable(dir, "SpecialJudge");
+    }
     const tests = JSON.parse(p.testcases),
       detail = [];
     let passed = 0,
-      maxMs = 0;
+      maxMs = 0,
+      totalScore = 0;
     for (let i = 0; i < tests.length; i++) {
       const [cmd, args] = cfg.run(dir),
         r = await runSandbox({
@@ -66,6 +74,16 @@ export async function runSubmission(sub) {
           timeout: p.time_limit + 500,
         });
       maxMs = Math.max(maxMs, r.ms);
+      let spj = null;
+      if (!r.code && spjCommand) {
+        const inputFile=join(dir,`input-${i}.txt`), userFile=join(dir,`user-${i}.txt`), answerFile=join(dir,`answer-${i}.txt`);
+        await Promise.all([writeFile(inputFile,tests[i][0]+"\n"),writeFile(userFile,r.out),writeFile(answerFile,tests[i][1]+"\n")]);
+        spj=await runSandbox({command:spjCommand,args:[inputFile,userFile,answerFile],cwd:dir,timeout:Math.max(3000,p.time_limit+500),outputLimit:65536});
+      }
+      const checkerScore = spjCommand && spj?.code === 0 ? (() => {
+        const match = String(spj.out || "").match(/(?:^|\s)SCORE\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)(?:\s|$)/i);
+        return match ? Math.max(0, Math.min(1, Number(match[1]))) : 1;
+      })() : 0;
       const status =
         r.code === 125
           ? "Output Limit"
@@ -73,6 +91,7 @@ export async function runSubmission(sub) {
             ? "Time Limit"
             : r.code
               ? "Runtime Error"
+              : spjCommand ? (spj?.code === 0 ? "Accepted" : spj?.code === 125 ? "Output Limit" : spj?.code === 127 || spj?.code < 0 ? "System Error" : "Wrong Answer")
               : normalize(r.out) === normalize(tests[i][1])
                 ? "Accepted"
                 : "Wrong Answer";
@@ -81,7 +100,9 @@ export async function runSubmission(sub) {
         status,
         time_ms: r.ms,
         output: status === "Wrong Answer" ? r.out.slice(0, 500) : undefined,
-        error: r.err.slice(0, 500) || undefined,
+        error: (spj?.err || r.err).slice(0, 500) || undefined,
+        checker: spjCommand ? (spj?.out || "").slice(0, 500) || undefined : undefined,
+        score: spjCommand && spj?.code === 0 ? Math.round(checkerScore * 100) : undefined,
       });
       if (status !== "Accepted")
         return finish(
@@ -93,8 +114,9 @@ export async function runSubmission(sub) {
           detail,
         );
       passed++;
+      totalScore += spjCommand ? checkerScore : 1;
     }
-    finish(sub.id, "Accepted", 100, maxMs, 0, detail);
+    finish(sub.id, "Accepted", Math.round((totalScore / tests.length) * 100), maxMs, 0, detail);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

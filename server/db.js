@@ -8,10 +8,21 @@ mkdirSync(dirname(dbPath), { recursive: true });
 export const db = new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'user',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS user_tags(id INTEGER PRIMARY KEY AUTOINCREMENT,label TEXT NOT NULL,color TEXT NOT NULL DEFAULT '#b08c00',scope TEXT NOT NULL DEFAULT 'personal');
+CREATE TABLE IF NOT EXISTS user_tag_links(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,tag_id INTEGER NOT NULL REFERENCES user_tags(id) ON DELETE CASCADE,PRIMARY KEY(user_id,tag_id));
+CREATE TABLE IF NOT EXISTS user_tag_overrides(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,tag_id INTEGER NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,tag_id));
+CREATE TABLE IF NOT EXISTS certifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,kind TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',color TEXT NOT NULL DEFAULT '#6b4bbd',status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT,UNIQUE(user_id,kind));
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS problems(id TEXT PRIMARY KEY,title TEXT NOT NULL,difficulty TEXT NOT NULL,tags TEXT NOT NULL,time_limit INTEGER NOT NULL,memory_limit INTEGER NOT NULL,description TEXT NOT NULL,input_format TEXT NOT NULL,output_format TEXT NOT NULL,sample_input TEXT NOT NULL,sample_output TEXT NOT NULL,testcases TEXT NOT NULL,submissions INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS contests(id INTEGER PRIMARY KEY,title TEXT NOT NULL,type TEXT NOT NULL,starts_at TEXT NOT NULL,duration INTEGER NOT NULL,description TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,subject TEXT NOT NULL,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(provider,subject));
+CREATE TABLE IF NOT EXISTS passkeys(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,public_key TEXT NOT NULL,counter INTEGER NOT NULL DEFAULT 0,transports TEXT NOT NULL DEFAULT '[]',device_type TEXT NOT NULL DEFAULT '',backed_up INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,last_used_at TEXT);
+CREATE INDEX IF NOT EXISTS passkeys_user_idx ON passkeys(user_id);
+CREATE TABLE IF NOT EXISTS problems(id TEXT PRIMARY KEY,title TEXT NOT NULL,difficulty TEXT NOT NULL,tags TEXT NOT NULL,time_limit INTEGER NOT NULL,memory_limit INTEGER NOT NULL,description TEXT NOT NULL,input_format TEXT NOT NULL,output_format TEXT NOT NULL,sample_input TEXT NOT NULL,sample_output TEXT NOT NULL,testcases TEXT NOT NULL,submissions INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0,anti_cheat_enabled INTEGER NOT NULL DEFAULT 0,anti_cheat_limit INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS contests(id INTEGER PRIMARY KEY,title TEXT NOT NULL,type TEXT NOT NULL,starts_at TEXT NOT NULL,duration INTEGER NOT NULL,description TEXT NOT NULL DEFAULT '',rule_set TEXT NOT NULL DEFAULT '',team_size INTEGER NOT NULL DEFAULT 0,solving_duration INTEGER NOT NULL DEFAULT 0,hack_duration INTEGER NOT NULL DEFAULT 0,personal_problem_count INTEGER NOT NULL DEFAULT 0,team_problem_count INTEGER NOT NULL DEFAULT 0,mystery_problem INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS contest_problems(contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,problem_id TEXT NOT NULL REFERENCES problems(id),position INTEGER NOT NULL,PRIMARY KEY(contest_id,problem_id));
+CREATE TABLE IF NOT EXISTS contest_participants(contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,team_no INTEGER NOT NULL,seat_no INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(contest_id,user_id),UNIQUE(contest_id,team_no,seat_no));
+CREATE TABLE IF NOT EXISTS contest_team_invites(token TEXT PRIMARY KEY,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,team_no INTEGER NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(contest_id,team_no));
+CREATE TABLE IF NOT EXISTS contest_hacks(id INTEGER PRIMARY KEY AUTOINCREMENT,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,attacker_id INTEGER NOT NULL REFERENCES users(id),target_user_id INTEGER REFERENCES users(id),problem_id TEXT NOT NULL REFERENCES problems(id),subtask TEXT NOT NULL DEFAULT '',phase TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',score_stolen INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,resolved_at TEXT);
+CREATE TABLE IF NOT EXISTS contest_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id),content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS learning_collections(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL CHECK(kind IN ('training','homework')),title TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',starts_at TEXT,ends_at TEXT,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS learning_problems(collection_id INTEGER NOT NULL REFERENCES learning_collections(id) ON DELETE CASCADE,problem_id TEXT NOT NULL REFERENCES problems(id),position INTEGER NOT NULL,PRIMARY KEY(collection_id,problem_id));
 CREATE TABLE IF NOT EXISTS discussions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),title TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -22,6 +33,8 @@ CREATE TABLE IF NOT EXISTS system_settings(key TEXT PRIMARY KEY,value TEXT NOT N
 CREATE TABLE IF NOT EXISTS countdowns(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,target TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS email_codes(email TEXT PRIMARY KEY,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,last_sent_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id),recipient_id INTEGER NOT NULL REFERENCES users(id),content TEXT NOT NULL,read_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS call_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,call_id TEXT NOT NULL,type TEXT NOT NULL,payload TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS call_signals_recipient_idx ON call_signals(recipient_id,id);
 CREATE TABLE IF NOT EXISTS blog_posts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),title TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS user_files(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,stored_name TEXT NOT NULL,original_name TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS domains(id INTEGER PRIMARY KEY AUTOINCREMENT,slug TEXT UNIQUE NOT NULL,name TEXT NOT NULL,avatar TEXT NOT NULL DEFAULT '',announcement TEXT NOT NULL DEFAULT '',owner_id INTEGER NOT NULL REFERENCES users(id),join_method TEXT NOT NULL DEFAULT 'application',invite_code TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -33,6 +46,42 @@ try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(ema
 try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN rp INTEGER NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE certifications ADD COLUMN display_text TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.prepare("UPDATE certifications SET title='个人认证' WHERE title='大V个人认证'").run(); } catch {}
+try { db.prepare("UPDATE certifications SET status='approved',reviewed_at=CURRENT_TIMESTAMP WHERE status='pending' AND user_id IN (SELECT id FROM users WHERE role IN ('admin','root'))").run(); } catch {}
+try { db.exec("ALTER TABLE blog_posts ADD COLUMN views INTEGER NOT NULL DEFAULT 0"); } catch {}
+for (const sql of [
+  "ALTER TABLE contests ADD COLUMN rule_set TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE contests ADD COLUMN team_size INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN solving_duration INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN hack_duration INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN personal_problem_count INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN team_problem_count INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN mystery_problem INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN problem_kinds TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE contests ADD COLUMN anti_cheat_disabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE contests ADD COLUMN team_mode TEXT NOT NULL DEFAULT 'invite'",
+  "ALTER TABLE contests ADD COLUMN team_assignments TEXT NOT NULL DEFAULT '[]'",
+]) { try { db.exec(sql); } catch {} }
+for (const sql of [
+  "ALTER TABLE problems ADD COLUMN anti_cheat_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE problems ADD COLUMN anti_cheat_limit INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE problems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE problems ADD COLUMN spj_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE problems ADD COLUMN spj_source TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE problems ADD COLUMN question_type TEXT NOT NULL DEFAULT 'programming'",
+  "ALTER TABLE problems ADD COLUMN objective_options TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE problems ADD COLUMN objective_answer TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE problems ADD COLUMN domain_id INTEGER REFERENCES domains(id)",
+  "ALTER TABLE problems ADD COLUMN objective_items TEXT NOT NULL DEFAULT '[]'",
+]) { try { db.exec(sql); } catch {} }
+try { const main=db.prepare("SELECT id FROM domains ORDER BY id LIMIT 1").get(); if(main) db.prepare("UPDATE problems SET domain_id=? WHERE domain_id IS NULL").run(main.id); } catch {}
+db.exec("CREATE TABLE IF NOT EXISTS problem_focus_events(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,problem_id TEXT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,count INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,problem_id))");
+try { db.exec("ALTER TABLE problem_focus_events ADD COLUMN last_event_at INTEGER NOT NULL DEFAULT 0"); } catch {}
+try { db.prepare("UPDATE problem_focus_events SET last_event_at=? WHERE count>0 AND last_event_at=0").run(Date.now()); } catch {}
+try { db.exec("ALTER TABLE user_tags ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'"); } catch {}
+try { db.prepare("DELETE FROM user_tag_links WHERE tag_id=-1").run(); db.prepare("DELETE FROM user_tags WHERE id=-1").run(); } catch {}
+try { const firstAdmin = db.prepare("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").get(); if (firstAdmin && !db.prepare("SELECT 1 FROM users WHERE role='root'").get()) db.prepare("UPDATE users SET role='root' WHERE id=?").run(firstAdmin.id); } catch {}
 const seedProblems = [
   [
     "IJ1001",
@@ -176,33 +225,13 @@ for (const p of seedProblems)
     ...p.slice(4, 11),
     JSON.stringify(p[11]),
   );
-const contest = db.prepare(
-  "INSERT INTO contests(title,type,starts_at,duration,description) SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM contests)",
+// Do not create sample contests or countdowns. A fresh installation starts empty.
+// Remove the legacy bundled defaults from existing installations as well.
+db.prepare("DELETE FROM contests WHERE title IN (?,?) AND description IN (?,?)").run(
+  "Infinte Weekly #18", "秋季算法挑战赛", "每周算法挑战", "综合算法能力测试",
 );
-contest.run(
-  "Infinte Weekly #18",
-  "ACM",
-  "2026-08-12T19:30:00+08:00",
-  120,
-  "每周算法挑战",
-);
-contest.run(
-  "秋季算法挑战赛",
-  "IOI",
-  "2026-08-16T09:00:00+08:00",
-  300,
-  "综合算法能力测试",
-);
-const target = new Date(Date.now() + 7 * 864e5);
-target.setSeconds(0, 0);
-db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES(?,?)").run(
-  "countdown",
-  JSON.stringify({ title: "下一场比赛开始", target: target.toISOString() }),
-);
-db.prepare("INSERT OR IGNORE INTO countdowns(id,title,target) VALUES(1,?,?)").run(
-  "下一场比赛开始",
-  target.toISOString(),
-);
+db.prepare("DELETE FROM countdowns WHERE id=1 AND title='下一场比赛开始'").run();
+db.prepare("DELETE FROM system_settings WHERE key='countdown'").run();
 db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES(?,?)").run(
   "site",
   JSON.stringify({
@@ -215,6 +244,7 @@ db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES(?,?)").run(
 db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES(?,?)").run(
   "advanced",
   JSON.stringify({
+    antiCheatResetMinutes: 10080,
     server: { allowInvite: true, uploadMb: 256, language: "简体中文", codeLanguage: "C++", cors: "" },
     limits: { problemFiles: 100, problemFileSize: 268435456, userFiles: 100, userFileSize: 134217728, contestFiles: 100, contestFileSize: 134217728, submissions: 60, submissionsPerUser: 15, pretests: 60, codeLength: 131072 },
     pagination: { problems: 100, contests: 20, discussions: 50, records: 100, ranking: 100, training: 10, replies: 50 },
@@ -242,7 +272,12 @@ export function publicProblem(row, full = false) {
       ? Math.round((row.accepted / row.submissions) * 100)
       : 0,
   };
+  try { p.objective_options=JSON.parse(row.objective_options||"[]"); } catch { p.objective_options=[]; }
+  try { p.objective_items=JSON.parse(row.objective_items||"[]"); } catch { p.objective_items=[]; }
+  p.objective_items = p.objective_items.map(({ answer, ...item }) => item);
   delete p.testcases;
+  delete p.spj_source;
+  delete p.objective_answer;
   if (!full) {
     delete p.description;
     delete p.input_format;

@@ -1,4 +1,4 @@
-# InfinteJudge
+# Infinte Judge
 
 Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 
@@ -16,7 +16,7 @@ Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 ```json
 {
   "product": "InfiniteJudge",
-  "version": "1.0.0",
+  "version": "1.1.5",
   "platform": "darwin",
   "arch": "arm64"
 }
@@ -25,20 +25,21 @@ Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 `platform` 和 `arch` 由运行 InfiniteJudge 的 Node.js 环境自动提供。例如
 macOS Apple Silicon 为 `darwin` / `arm64`，Linux x64 为 `linux` / `x64`。
 
-如果当前已经是最新版本，更新服务器返回 HTTP `200` 和
-`{"update":false}`（也兼容 `{"latest":true}` 或返回与当前版本相同的
-`version`）。
+如果当前已经是最新版本或没有兼容的更新包，更新服务器按服务器规范返回
+HTTP `204 No Content`（空响应体）。客户端会将其显示为“当前已是最新版本”。
+客户端同时兼容 HTTP `200` 和 `{"update":false}`、`{"latest":true}` 或返回与
+当前版本相同的 `version`。
 如果存在新版本，更新服务器返回 HTTP `200` 和以下 JSON：
 
 ```json
 {
-  "version": "1.1.0",
-  "url": "https://update.brightweb.top/oj/packages/infinitejudge-1.1.0.tar.gz",
+  "version": "1.1.5",
+  "url": "https://update.brightweb.top/oj/packages/infinitejudge-1.1.5.tar.gz",
   "sha256": "更新包的64位十六进制SHA-256值"
 }
 ```
 
-更新服务器下发的是一个 `tar.gz` 源码更新包。压缩包可以带一层顶级目录，
+更新服务器可以下发 `.zip`、`.tar.gz` 或 `.tgz` 源码更新包。压缩包可以带一层顶级目录，
 但程序根目录必须包含 `package.json`，并且其中的 `version` 必须和清单中的
 `version` 完全一致。
 
@@ -46,7 +47,7 @@ macOS Apple Silicon 为 `darwin` / `arm64`，Linux x64 为 `linux` / `x64`。
 `package-lock.json`、`vite.config.ts`、`tsconfig.json`、部署脚本等程序文件。
 更新包不能包含 `data/`、数据库、用户上传文件、`.env`、`.git` 和
 `node_modules`。客户端会先校验 SHA-256，再覆盖程序文件，并保留本机数据，
-最后执行 `npm install` 和 `npm run build`。
+最后执行 `npm install` 和 `npm run build`。管理员也可以在控制面板中手动上传以上格式的更新包；上传完成后系统会执行相同的检查、安装、构建和自动重启流程。
 
 Cross-platform online judge with a Hydro-style plugin compatibility layer and
 native process sandbox. It runs without Docker on macOS, Windows and Linux.

@@ -15,15 +15,19 @@ import { SettingsPage } from "./settings";
 type View =
   "dashboard" | "scripts" | "import" | "users" | "content" | "settings";
 export function ControlPanel({
+  user,
   problems,
   reload,
   error,
   changed,
+  createProblem,
 }: {
+  user: User;
   problems: Problem[];
   reload: () => void;
   error: (s: string) => void;
   changed: (v: SiteConfig) => void;
+  createProblem?: () => void;
 }) {
   const [view, setView] = useState<View>("dashboard"),
     [health, setHealth] = useState<any>(null),
@@ -47,11 +51,9 @@ export function ControlPanel({
   }, [view]);
   const items: Array<[View, string, any]> = [
     ["dashboard", "控制面板", Activity],
-    ["content", "内容管理", Database],
     ["scripts", "脚本管理", Play],
     ["import", "导入用户", Upload],
-    ["users", "用户权限", Users],
-    ["settings", "配置管理", Settings2],
+    ...(user.role === "root" ? [["users", "用户权限", Users], ["settings", "配置管理", Settings2]] as Array<[View, string, any]> : []),
   ];
   return (
     <section className="page control-layout">
@@ -89,12 +91,31 @@ export function ControlPanel({
                 </b>
               </div>
             </section>
+            <section className="control-card ai-policy-tool">
+              <div>
+                <ShieldCheck />
+                <div>
+                  <h1>AI 使用规则</h1>
+                  <p>为当前管理域的全部题目追加公开声明：禁止使用生成式 AI，并说明风险筛查、人工复核和申诉机制。</p>
+                </div>
+              </div>
+              <button className="primary" onClick={async () => {
+                if (!confirm("确定为当前管理域的全部题目追加 AI 使用规则吗？已包含该声明的题目不会重复添加。")) return;
+                try {
+                  const result = await api.appendAiPolicy();
+                  alert(result.updated ? `已为 ${result.updated} 道题目追加 AI 使用规则` : "所有题目均已包含 AI 使用规则");
+                  reload();
+                } catch (e: any) {
+                  error(e.message);
+                }
+              }}><ShieldCheck />一键追加到全部题目</button>
+            </section>
           </>
         )}
         {view === "content" && (
           <section className="control-card">
             <h1>内容管理</h1>
-            <AdminPage problems={problems} reload={reload} error={error} />
+            <AdminPage problems={problems} reload={reload} error={error} createProblem={createProblem} />
           </section>
         )}
         {view === "scripts" && (
@@ -222,6 +243,7 @@ export function ControlPanel({
                       >
                         <option value="user">普通用户</option>
                         <option value="admin">管理员</option>
+                        <option value="root">Root</option>
                       </select>
                     </td>
                   </tr>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "./markdown";
+import { handleEditorTab } from "./editor";
 import { Check, Plus, Save, ShieldCheck, Users, X } from "lucide-react";
 import { api, User } from "./api";
 type View = "dashboard" | "edit" | "join" | "members" | "applications";
@@ -18,7 +18,8 @@ export function DomainsPage({
     [view, setView] = useState<View>("dashboard"),
     [creating, setCreating] = useState(false),
     [slug, setSlug] = useState(""),
-    [name, setName] = useState("");
+    [name, setName] = useState(""),
+    [carouselText, setCarouselText] = useState("");
   const load = () =>
     api
       .domains()
@@ -26,7 +27,9 @@ export function DomainsPage({
       .catch((e) => error(e.message));
   const open = async (id: number) => {
     try {
-      setSelected(await api.domain(id));
+      const domain = await api.domain(id);
+      setSelected(domain);
+      setCarouselText(Array.isArray(domain.carousel) ? domain.carousel.map((item: any) => [item.image, item.title || "", item.link || ""].join("|")).join("\n") : "");
       setView("dashboard");
     } catch (e: any) {
       error(e.message);
@@ -45,7 +48,7 @@ export function DomainsPage({
             <h1>域</h1>
             <p>为团队、学校或训练组织独立成员与权限。</p>
           </div>
-          {user.role === "admin" && (
+          {(user.role === "admin" || user.role === "root") && (
             <button className="primary" onClick={() => setCreating(true)}>
               <Plus />
               创建域
@@ -121,7 +124,8 @@ export function DomainsPage({
   const save = async (e: any) => {
     e.preventDefault();
     try {
-      await api.updateDomain(selected.id, selected);
+      const carousel = carouselText.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 10).map((line) => { const [image, title = "", link = ""] = line.split("|"); return { image: image.trim(), title: title.trim(), link: link.trim() }; }).filter((item) => item.image);
+      await api.updateDomain(selected.id, { ...selected, carousel });
       changed?.();
       refresh();
     } catch (e: any) {
@@ -145,11 +149,7 @@ export function DomainsPage({
                 返回域列表
               </button>
               <h1>{selected.name}</h1>
-              <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {selected.announcement || "暂无公告"}
-                </ReactMarkdown>
-              </div>
+              <Markdown>{selected.announcement || "暂无公告"}</Markdown>
             </section>
             <section className="control-card">
               <h1>信息</h1>
@@ -187,13 +187,23 @@ export function DomainsPage({
             </label>
             <label className="field">
               <span>公告（Markdown）</span>
-              <textarea
-                rows={15}
-                value={selected.announcement}
-                onChange={(e) =>
-                  setSelected({ ...selected, announcement: e.target.value })
-                }
-              />
+          <textarea
+            rows={15}
+            value={selected.announcement}
+            onChange={(e) =>
+              setSelected({ ...selected, announcement: e.target.value })
+            }
+            onKeyDown={(e) =>
+              handleEditorTab(e, selected.announcement, (next) =>
+                setSelected({ ...selected, announcement: next })
+              )
+            }
+          />
+            </label>
+            <label className="field">
+              <span>轮播图（每行：图片地址 | 标题 | 跳转地址）</span>
+          <textarea rows={7} value={carouselText} onChange={(e) => setCarouselText(e.target.value)} onKeyDown={(e) => handleEditorTab(e, carouselText, setCarouselText)} placeholder="https://example.com/banner.jpg | 标题 | https://example.com" />
+              <small>最多 10 张，标题和跳转地址可留空。</small>
             </label>
             <button className="primary">
               <Save />

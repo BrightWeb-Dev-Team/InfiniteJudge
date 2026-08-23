@@ -7,3 +7,24 @@ Plugins: @infinte/example-hydro-plugin
 Infinte Judge API: http://localhost:3001
 Sandbox: sandbox-exec (filesystem+network)
 Plugins: @infinte/example-hydro-plugin
+node:events:486
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3001
+    at Server.setupListenHandle [as _listen2] (node:net:2008:16)
+    at listenInCluster (node:net:2065:12)
+    at Server.listen (node:net:2170:7)
+    at app.listen (/Users/jesper/Desktop/项目/InfiniteJudge/node_modules/express/lib/application.js:635:24)
+    at file:///Users/jesper/Desktop/%E9%A1%B9%E7%9B%AE/InfiniteJudge/server/index.js:1181:5
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2044:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3001
+}
+
+Node.js v25.8.1

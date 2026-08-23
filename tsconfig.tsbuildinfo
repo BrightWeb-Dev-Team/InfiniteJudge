@@ -1,1 +1,1 @@
-{"root":["./src/account.tsx","./src/admin.tsx","./src/api.ts","./src/control.tsx","./src/domains.tsx","./src/main.tsx","./src/settings.tsx"],"version":"5.7.2"}
+{"root":["./src/account.tsx","./src/admin.tsx","./src/api.ts","./src/control.tsx","./src/datetime.tsx","./src/domains.tsx","./src/editor.ts","./src/main.tsx","./src/markdown.tsx","./src/objective-editor.tsx","./src/settings.tsx","./src/video-call.tsx"],"version":"5.7.2"}

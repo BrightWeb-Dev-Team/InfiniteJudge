@@ -25,24 +25,33 @@ export function auth(req, res, next) {
     .get(token, Date.now());
   if (!user) return res.status(401).json({ error: "登录已过期" });
   req.user = user;
+  presence.set(user.id, Date.now());
   next();
+}
+const presence = new Map();
+export function isUserOnline(userId) {
+  return Date.now() - (presence.get(Number(userId)) || 0) < 45_000;
 }
 export function admin(req, res, next) {
   auth(req, res, () =>
-    req.user.role === "admin"
+    req.user.role === "admin" || req.user.role === "root"
       ? next()
       : res.status(403).json({ error: "需要管理员权限" }),
   );
 }
+export function rootAdmin(req, res, next) {
+  auth(req, res, () => req.user.role === "root" ? next() : res.status(403).json({ error: "需要 Root 权限" }));
+}
 const elevations = new Map();
+const ADMIN_VERIFICATION_TTL_MS = 4 * 60 * 60_000;
 export function createElevation(userId) {
   const token = randomBytes(32).toString("hex");
-  const expiresAt = Date.now() + 10 * 60_000;
+  const expiresAt = Date.now() + ADMIN_VERIFICATION_TTL_MS;
   elevations.set(token, { userId, expiresAt });
   return { token, expiresAt };
 }
 export function elevatedAdmin(req, res, next) {
-  admin(req, res, () => {
+  rootAdmin(req, res, () => {
     const token = req.headers["x-admin-verification"];
     const elevation = elevations.get(token);
     if (

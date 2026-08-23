@@ -1,7 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   Activity,
   BookOpen,
@@ -15,6 +13,8 @@ import {
   Home,
   Menu,
   Moon,
+  Music2,
+  Sparkles,
   Search,
   Send,
   Sun,
@@ -28,6 +28,7 @@ import {
   LogOut,
   Settings2,
   ShieldCheck,
+  BadgeCheck,
   Plus,
   SlidersHorizontal,
   Trash2,
@@ -36,6 +37,8 @@ import {
   Wrench,
   NotebookText,
   FolderOpen,
+  Upload,
+  KeyRound,
 } from "lucide-react";
 import {
   api,
@@ -46,14 +49,27 @@ import {
   User,
 } from "./api";
 import { AdminPage, emptyProblem } from "./admin";
+import { ObjectiveItemsEditor } from "./objective-editor";
 import { ControlPanel } from "./control";
 import { DomainsPage } from "./domains";
 import { AccountPage, BlogPage, FilesPage, MessagesPage, ProfilePage } from "./account";
-import "./style.css";
+import { Markdown as RichMarkdown } from "./markdown";
+import { handleEditorTab } from "./editor";
+import { VideoCall } from "./video-call";
+import { startAuthentication } from "@simplewebauthn/browser";
+import { WheelDateTime } from "./datetime";
+
+const oauthHash = new URLSearchParams(location.hash.replace(/^#/, ""));
+const oauthToken = oauthHash.get("oauth_token");
+if (oauthToken) {
+  localStorage.setItem("ij-token", oauthToken);
+  history.replaceState(null, "", location.pathname + location.search);
+}
 type Page =
   | "home"
   | "problems"
   | "contests"
+  | "contest-create"
   | "training"
   | "homework"
   | "ranking"
@@ -61,45 +77,75 @@ type Page =
   | "discuss"
   | "problem"
   | "problem-create"
+  | "problem-tests"
   | "settings"
   | "queue"
   | "status"
   | "compatibility"
+  | "about"
+  | "license"
   | "domains"
   | "account"
   | "messages"
   | "blog"
   | "files"
-  | "profile";
+  | "profile"
+  | "video-call"
+  | "certifications"
+  | "certification-guide";
+
+type Theme = "light" | "dark" | "meteor" | "miku";
+
+const getInitialTheme = (): Theme => {
+  const saved = localStorage.getItem("theme");
+  return saved === "dark" || saved === "meteor" || saved === "miku" ? saved : "light";
+};
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 const pagePaths: Record<Exclude<Page, "problem" | "profile">, string> = {
   home: "/",
   problems: "/problems",
   "problem-create": "/problems/create",
+  "problem-tests": "/problems",
   contests: "/contests",
+  "contest-create": "/contest/create",
   training: "/training",
   homework: "/homework",
   ranking: "/ranking",
   records: "/records",
   discuss: "/discussions",
+  certifications: "/certifications",
+  "certification-guide": "/certifications/guide",
   settings: "/settings",
   queue: "/queue",
   status: "/status",
   compatibility: "/compatibility",
+  about: "/about",
+  license: "/about/license",
   domains: "/domains",
   account: "/account",
   messages: "/messages",
   blog: "/blog",
   files: "/files",
+  "video-call": "/video-call",
 };
 function routeFromPath(): { page: Page; id?: string } {
   const path = location.pathname.replace(/\/$/, "") || "/";
+  if (["/license", "/about/license"].includes(path.toLowerCase())) return { page: "license" };
   if (path === "/problems/create") return { page: "problem-create" };
+  if (path === "/contest/create") return { page: "contest-create" };
+  const record = path.match(/^\/records\/(\d+)$/);
+  if (record) return { page: "records", id: record[1] };
+  const testPage = path.match(/^\/problems\/([^/]+)\/tests$/);
+  if (testPage) return { page: "problem-tests", id: decodeURIComponent(testPage[1]) };
   const match = path.match(/^\/problems\/([^/]+)$/);
   if (match) return { page: "problem", id: decodeURIComponent(match[1]) };
   const profile = path.match(/^\/users\/(\d+)$/);
   if (profile) return { page: "profile", id: profile[1] };
+  const videoCall = path.match(/^\/video-call\/(\d+)$/);
+  if (videoCall) return { page: "video-call", id: videoCall[1] };
   if (/^\/contests\/\d+$/.test(path)) return { page: "contests" };
   if (/^\/discussions\/\d+$/.test(path)) return { page: "discuss" };
+  if (/^\/blog(?:\/create|\/\d+(?:\/edit)?)$/.test(path)) return { page: "blog" };
   return {
     page:
       (
@@ -112,15 +158,19 @@ function routeFromPath(): { page: Page; id?: string } {
           "/ranking": "ranking",
           "/records": "records",
           "/discussions": "discuss",
+          "/certifications": "certifications",
+          "/certifications/guide": "certification-guide",
           "/settings": "settings",
           "/queue": "queue",
           "/status": "status",
           "/compatibility": "compatibility",
+          "/about": "about",
           "/domains": "domains",
           "/account": "account",
           "/messages": "messages",
           "/blog": "blog",
           "/files": "files",
+          "/video-call": "video-call",
         } as any
       )[path] || "home",
   };
@@ -144,13 +194,7 @@ const starter = {
   java: "public class Main {\n    public static void main(String[] args) {\n        // 在这里开始你的解答\n    }\n}",
 };
 function Markdown({ children }: { children?: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {children || ""}
-      </ReactMarkdown>
-    </div>
-  );
+  return <RichMarkdown>{children}</RichMarkdown>;
 }
 function ProblemCreatePage({
   error,
@@ -190,7 +234,7 @@ function ProblemCreatePage({
         <div>
           <span className="kicker">PROBLEM AUTHORING</span>
           <h1>创建题目</h1>
-          <p>编辑题面、运行限制与测试数据。</p>
+          <p>编辑题面、运行限制与答案。</p>
         </div>
         <button className="plain" type="button" onClick={cancel}>
           <ArrowLeft /> 返回题库
@@ -220,33 +264,24 @@ function ProblemCreatePage({
             <CreateField label="内存限制 MB">
               <input required min="1" type="number" value={form.memory_limit} onChange={(e) => field("memory_limit", Number(e.target.value))} />
             </CreateField>
+            <label className="check-row"><input type="checkbox" checked={!!form.hidden} onChange={(e) => field("hidden", e.target.checked ? 1 : 0)} />隐藏题目（仅管理员和 Root 可见）</label>
+            <CreateField label="题型"><select value={form.question_type||"programming"} onChange={(e)=>setForm({...form,question_type:e.target.value,objective_items:e.target.value==="objective"&&!(form.objective_items||[]).length?[{type:"single",options:["选项 A","选项 B"],answer:[]}]:form.objective_items})}><option value="programming">编程题</option><option value="objective">客观题（可混合）</option></select></CreateField>
           </div>
         </div>
         <div className="create-editor-grid">
-          <div className="create-section statement-editor">
-            <h2>题面内容</h2>
-            {[
-              ["description", "题目描述（Markdown）", 14],
-              ["input_format", "输入格式（Markdown）", 7],
-              ["output_format", "输出格式（Markdown）", 7],
-              ["sample_input", "样例输入", 5],
-              ["sample_output", "样例输出", 5],
-            ].map(([key, label, rows]) => (
-              <CreateField key={String(key)} label={String(label)}>
-                <textarea rows={Number(rows)} value={form[String(key)]} onChange={(e) => field(String(key), e.target.value)} />
-              </CreateField>
-            ))}
-          </div>
+          <div className="create-section statement-editor"><h2>完整题面</h2><CreateField label="Markdown（在正文中编写题目描述、输入格式、输出格式和样例）"><textarea rows={34} value={form.description} placeholder={"## 题目描述\n\n在这里编写题目内容。\n\n## 输入格式\n\n在这里编写输入格式。\n\n## 输出格式\n\n在这里编写输出格式。\n\n## 样例\n\n```text\n输入与输出示例\n```"} onChange={(e) => field("description", e.target.value)} onKeyDown={(e) => handleEditorTab(e, form.description, (next) => field("description", next))} /></CreateField></div>
           <aside className="create-side">
             <div className="create-section preview-pane">
               <h2>Markdown 预览</h2>
-              <Markdown>{form.description || "在左侧输入题目描述后，这里会显示预览。"}</Markdown>
+              <Markdown>{form.description || "在左侧输入完整题面后，这里会显示实时预览。"}</Markdown>
             </div>
             <div className="create-section">
-              <h2>测试数据</h2>
-              <CreateField label="测试点 JSON">
-                <textarea className="testcase-editor" rows={10} value={form.testcases} onChange={(e) => field("testcases", e.target.value)} />
-              </CreateField>
+              <h2>{form.question_type === "programming" ? "测试点设置" : "客观题答案"}</h2>
+              {form.question_type === "programming" ? (
+                <p className="create-side-hint">题目创建后，将在独立页面配置测试点与 Special Judge。</p>
+              ) : (
+                <ObjectiveItemsEditor items={form.objective_items || []} onChange={(items) => field("objective_items", items)} />
+              )}
             </div>
           </aside>
         </div>
@@ -257,6 +292,15 @@ function ProblemCreatePage({
       </form>
     </section>
   );
+}
+function ProblemTestsPage({ id, error, cancel, done }: { id: string; error: (message: string) => void; cancel: () => void; done: (problem: Problem) => void }) {
+  const [form, setForm] = useState<{ testcases: string[][]; spj_enabled: number; spj_source: string } | null>(null), [title, setTitle] = useState(""), [saving, setSaving] = useState(false), [importing, setImporting] = useState(false);
+  useEffect(() => { api.adminProblem(id).then((problem) => { if (problem.question_type !== "programming") throw new Error("客观题不需要配置测试点"); setTitle(problem.title); setForm({ testcases: problem.testcases?.length ? problem.testcases : [["", ""]], spj_enabled: problem.spj_enabled || 0, spj_source: problem.spj_source || "" }); }).catch((cause) => error(cause.message)); }, [id]);
+  const updateTest = (index: number, field: 0 | 1, value: string) => setForm((current) => current ? { ...current, testcases: current.testcases.map((test, i) => i === index ? test.map((part, j) => j === field ? value : part) : test) } : current);
+  async function importTestcases(file?: File) { if (!file) return; setImporting(true); try { const result = await api.importProblemTestcases(id, file); setForm((current) => current ? { ...current, testcases: result.testcases } : current); alert(`已从文件包读取 ${result.testcases.length} 组测试点，请检查后点击“保存测试点”`); } catch (cause: any) { error(cause.message); } finally { setImporting(false); } }
+  async function submit(event: React.FormEvent) { event.preventDefault(); if (!form) return; setSaving(true); try { await api.updateProblemTestcases(id, form); done(await api.problem(id)); } catch (cause: any) { error(cause.message); } finally { setSaving(false); } }
+  if (!form) return <section className="page"><div className="empty">正在加载测试点设置...</div></section>;
+  return <section className="page problem-create-page"><div className="page-title create-page-title"><div><span className="kicker">TEST DATA</span><h1>测试点设置</h1><p>{id} · {title}</p></div><button className="plain" type="button" onClick={cancel}><ArrowLeft /> 返回题库</button></div><form className="problem-create-form" onSubmit={submit}><div className="create-section"><div className="testcase-section-head"><h2>测试数据</h2><label className="secondary testcase-import-btn"><Upload />{importing ? "正在读取..." : "上传测试点 ZIP"}<input type="file" accept=".zip,application/zip" hidden disabled={importing} onChange={(event) => { importTestcases(event.target.files?.[0]); event.target.value = ""; }} /></label></div><div className="testcase-list">{form.testcases.map((test, index) => <section key={index}><div className="testcase-header"><strong>测试点 {index + 1}</strong><button type="button" disabled={form.testcases.length === 1} onClick={() => setForm({ ...form, testcases: form.testcases.filter((_, item) => item !== index) })}>删除</button></div><label>输入<textarea value={test[0]} onChange={(event) => updateTest(index, 0, event.target.value)} /></label><label>输出<textarea value={test[1]} onChange={(event) => updateTest(index, 1, event.target.value)} /></label></section>)}<button type="button" className="plain" onClick={() => setForm({ ...form, testcases: [...form.testcases, ["", ""]] })}>添加测试点 +</button></div></div><div className="create-section"><h2>Special Judge</h2><label className="check-row"><input type="checkbox" checked={!!form.spj_enabled} onChange={(event) => setForm({ ...form, spj_enabled: event.target.checked ? 1 : 0 })} />启用 Special Judge</label>{!!form.spj_enabled && <CreateField label="特判程序（C++20；argv[1] 输入、argv[2] 用户输出、argv[3] 标准输出）"><textarea className="testcase-editor" rows={18} value={form.spj_source} onChange={(event) => setForm({ ...form, spj_source: event.target.value })} onKeyDown={(event) => handleEditorTab(event, form.spj_source, (next) => setForm({ ...form, spj_source: next }))} /></CreateField>}</div><div className="create-actions"><button type="button" className="plain" onClick={cancel}>取消</button><button className="primary" disabled={saving || importing}>{saving ? "正在保存..." : "保存测试点"}</button></div></form></section>;
 }
 function CreateField({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;
@@ -289,19 +333,122 @@ function SetupPage({ done }: { done: (result: { token: string; user: User }, sit
     </form>
   </main>;
 }
+function MeteorShower() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    type Star = { x: number; y: number; radius: number; alpha: number; phase: number };
+    type Meteor = { x: number; y: number; length: number; speed: number; alpha: number; width: number };
+    let width = 0, height = 0, frame = 0, animationFrame = 0;
+    let stars: Star[] = [], meteors: Meteor[] = [];
+
+    const spawnMeteor = () => meteors.push({
+      x: width * 0.25 + Math.random() * width * 0.9,
+      y: -80 - Math.random() * height * 0.4,
+      length: 90 + Math.random() * 160,
+      speed: 8 + Math.random() * 9,
+      alpha: 0.5 + Math.random() * 0.4,
+      width: 0.8 + Math.random() * 1.5,
+    });
+
+    const draw = (animate = true) => {
+      context.clearRect(0, 0, width, height);
+      frame += 1;
+      stars.forEach((star) => {
+        const twinkle = animate ? 0.65 + 0.35 * Math.sin(frame * 0.018 + star.phase) : 0.8;
+        context.fillStyle = `rgba(190, 225, 255, ${star.alpha * twinkle})`;
+        context.beginPath();
+        context.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        context.fill();
+      });
+      if (animate && Math.random() < 0.035 && meteors.length < 7) spawnMeteor();
+      meteors.forEach((meteor) => {
+        meteor.x -= meteor.speed * 0.55;
+        meteor.y += meteor.speed;
+        const glow = context.createLinearGradient(
+          meteor.x + meteor.length * 0.55, meteor.y - meteor.length, meteor.x, meteor.y,
+        );
+        glow.addColorStop(0, "rgba(130, 205, 255, 0)");
+        glow.addColorStop(0.72, `rgba(135, 214, 255, ${meteor.alpha * 0.55})`);
+        glow.addColorStop(1, `rgba(245, 252, 255, ${meteor.alpha})`);
+        context.strokeStyle = glow;
+        context.lineWidth = meteor.width;
+        context.lineCap = "round";
+        context.beginPath();
+        context.moveTo(meteor.x + meteor.length * 0.55, meteor.y - meteor.length);
+        context.lineTo(meteor.x, meteor.y);
+        context.stroke();
+      });
+      meteors = meteors.filter((meteor) => meteor.y < height + meteor.length && meteor.x > -meteor.length);
+      if (animate) animationFrame = requestAnimationFrame(() => draw(true));
+    };
+
+    const resize = () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      stars = Array.from({ length: Math.max(70, Math.floor((width * height) / 14000)) }, () => ({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        radius: 0.35 + Math.random() * 1.2,
+        alpha: 0.25 + Math.random() * 0.65,
+        phase: Math.random() * Math.PI * 2,
+      }));
+    };
+
+    const restart = () => {
+      cancelAnimationFrame(animationFrame);
+      meteors = [];
+      if (!reducedMotion.matches) {
+        for (let i = 0; i < 3; i += 1) spawnMeteor();
+      }
+      draw(!reducedMotion.matches);
+    };
+    const handleResize = () => { resize(); restart(); };
+    resize();
+    restart();
+    window.addEventListener("resize", handleResize);
+    reducedMotion.addEventListener?.("change", restart);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", handleResize);
+      reducedMotion.removeEventListener?.("change", restart);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="meteor-canvas" aria-hidden="true" />;
+}
+
 function App() {
   const initialRoute = routeFromPath();
   const [setup, setSetup] = useState<boolean | null>(null),
     [page, setPage] = useState<Page>(initialRoute.page),
-    [dark, setDark] = useState(localStorage.theme === "dark"),
+    [theme, setTheme] = useState<Theme>(getInitialTheme),
     [mobile, setMobile] = useState(false),
+    [compatibility, setCompatibility] = useState(() => localStorage.getItem("ij-compatibility-mode") === "1"),
     [problems, setProblems] = useState<Problem[]>([]),
     [selected, setSelected] = useState<Problem | null>(null),
+    [selectedContestId, setSelectedContestId] = useState<number | undefined>(),
     [profileId, setProfileId] = useState(Number(initialRoute.id || 0)),
+    [recordId, setRecordId] = useState<number | null>(initialRoute.page === "records" && initialRoute.id ? Number(initialRoute.id) : null),
+    [testProblemId, setTestProblemId] = useState(initialRoute.page === "problem-tests" ? initialRoute.id || "" : ""),
     [user, setUser] = useState<User | null>(null),
     [authOpen, setAuthOpen] = useState(false),
     [userMenu, setUserMenu] = useState(false),
+    [tagManagerOpen, setTagManagerOpen] = useState(false),
     [unread, setUnread] = useState(0),
+    [domains, setDomains] = useState<any[]>([]),
+    [domainId, setDomainId] = useState(() => localStorage.getItem("ij-domain-id") || ""),
     [adminVerifyOpen, setAdminVerifyOpen] = useState(false),
     [adminTarget, setAdminTarget] = useState<"settings" | "domains">(
       initialRoute.page === "domains" ? "domains" : "settings",
@@ -310,8 +457,10 @@ function App() {
       Number(sessionStorage.getItem("ij-admin-verification-expires")) >
         Date.now(),
     ),
-    [communityVersion, setCommunityVersion] = useState("..."),
+    [communityVersion] = useState("2.4.5"),
     [error, setError] = useState(""),
+    [announcementOpen, setAnnouncementOpen] = useState(false),
+    [announcementDismiss, setAnnouncementDismiss] = useState(false),
     [site, setSite] = useState<SiteConfig>({
       name: "Infinte Judge",
       serviceUrl: location.origin + "/",
@@ -323,15 +472,21 @@ function App() {
       .problems()
       .then(setProblems)
       .catch((e) => setError(e.message));
+  const isAdmin = (user?.role === "admin" || user?.role === "root") || user?.role === "root";
+  const toggleCompatibility = () => { const next = !compatibility; setCompatibility(next); localStorage.setItem("ij-compatibility-mode", next ? "1" : "0"); document.documentElement.toggleAttribute("data-compatibility", next); window.dispatchEvent(new CustomEvent("ij-compatibility-change", { detail: next })); };
+  useEffect(() => { document.documentElement.toggleAttribute("data-compatibility", compatibility); const change = (event: Event) => setCompatibility(Boolean((event as CustomEvent).detail)); window.addEventListener("ij-compatibility-change", change); return () => window.removeEventListener("ij-compatibility-change", change); }, [compatibility]);
   useEffect(() => {
     api.setupStatus().then((value) => setSetup(!value.installed)).catch(() => setSetup(false));
-    api.version().then((value) => setCommunityVersion(value.version)).catch(() => {});
     load();
     api
       .site()
       .then((v) => {
         setSite(v);
         document.title = v.name;
+        const now = Date.now(), start = v.announcementStartsAt ? new Date(v.announcementStartsAt).getTime() : -Infinity, end = v.announcementEndsAt ? new Date(v.announcementEndsAt).getTime() : Infinity;
+        const domainAnnouncement = v.domainAnnouncement || "";
+        const noticeId = `${v.announcementStartsAt || ""}|${v.announcementEndsAt || ""}|${domainAnnouncement}`;
+        if (v.announcementPopup && domainAnnouncement && now >= start && now <= end && localStorage.getItem("ij-dismissed-announcement") !== noticeId) setAnnouncementOpen(true);
       })
       .catch(() => {});
     if (initialRoute.page === "problem" && initialRoute.id)
@@ -344,7 +499,7 @@ function App() {
         .me()
         .then(async (value) => {
           setUser(value);
-          if (initialRoute.page === "settings" && value.role === "admin") {
+          if (initialRoute.page === "settings" && value.role === "root") {
             let valid = adminVerified;
             if (valid) {
               try { await api.adminVerification(); }
@@ -367,7 +522,10 @@ function App() {
     const handler = () => {
       const route = routeFromPath();
       setPage(route.page);
-      if (route.page === "profile" && route.id) setProfileId(Number(route.id));
+      setUserMenu(false);
+      if (route.page === "problem-tests") setTestProblemId(route.id || "");
+      if ((route.page === "profile" || route.page === "video-call") && route.id) setProfileId(Number(route.id));
+      if (route.page === "records") setRecordId(route.id ? Number(route.id) : null);
       if (route.page === "problem" && route.id)
         api
           .problem(route.id)
@@ -377,16 +535,25 @@ function App() {
     addEventListener("popstate", handler);
     return () => removeEventListener("popstate", handler);
   }, []);
+  // Keep route changes and browser history restores from leaving the page scrolled
+  // beneath the fixed navigation bar.
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
-    localStorage.theme = dark ? "dark" : "light";
-  }, [dark]);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [page]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("theme", theme);
+  }, [theme]);
   useEffect(() => {
     if (!user) return setUnread(0);
-    api.messages().then((items) => setUnread(items.filter((item) => !item.read_at).length)).catch(() => {});
+    api.messages()
+      .then((items) => setUnread(items.filter((item) => item.recipient_id === user.id && !item.read_at).length))
+      .catch(() => {});
   }, [user, page]);
+  useEffect(()=>{if(!user)return setDomains([]);api.domains().then((items)=>{setDomains(items);if(!domainId&&items[0]){localStorage.setItem("ij-domain-id",String(items[0].id));setDomainId(String(items[0].id));}}).catch(()=>{});},[user]);
+  useEffect(()=>{if(domainId)load();},[domainId]);
   useEffect(() => {
-    if (user?.role !== "admin" || page !== "settings")
+    if (user?.role !== "root" || page !== "settings")
       return;
     const expires = Number(
         sessionStorage.getItem("ij-admin-verification-expires"),
@@ -408,9 +575,11 @@ function App() {
     return () => clearTimeout(timer);
   }, [page, user, adminVerified]);
   const go = async (p: Exclude<Page, "problem" | "profile">) => {
+    if (p === "problem-tests") return;
+    if (p === "settings" && user?.role !== "root") { setError("普通管理员无权访问控制面板"); return; }
     if (
       p === "settings" &&
-      user?.role === "admin"
+      user?.role === "root"
     ) {
       let verified = adminVerified;
       if (verified) {
@@ -431,9 +600,11 @@ function App() {
       }
     }
     history.pushState({}, "", pagePaths[p]);
+    if (p === "records") setRecordId(null);
     setPage(p);
+    setUserMenu(false);
     setMobile(false);
-    scrollTo(0, 0);
+    scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
   const openProfile = (id: number) => {
     history.pushState({}, "", `/users/${id}`);
@@ -441,15 +612,16 @@ function App() {
     setPage("profile");
     setUserMenu(false);
     setMobile(false);
-    scrollTo(0, 0);
+    scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
-  const open = async (p: Problem) => {
+  const open = async (p: Problem, contestId?: number) => {
     try {
       setSelected(await api.problem(p.id));
+      setSelectedContestId(contestId);
       history.pushState({}, "", `/problems/${encodeURIComponent(p.id)}`);
       setPage("problem");
       setMobile(false);
-      scrollTo(0, 0);
+      scrollTo({ top: 0, left: 0, behavior: "auto" });
     } catch (e: any) {
       setError(e.message);
     }
@@ -478,6 +650,7 @@ function App() {
     );
   return (
     <>
+      {theme === "meteor" && !compatibility && !isSafari && <MeteorShower />}
       <header>
         <button className="brand" onClick={() => go("home")}>
           <span className="brand-mark">
@@ -496,7 +669,7 @@ function App() {
               {label}
             </button>
           ))}
-          {user?.role === "admin" && (
+          {isAdmin && (
             <button
               className={page === "domains" ? "active" : ""}
               onClick={() => go("domains")}
@@ -505,7 +678,7 @@ function App() {
               管理域
             </button>
           )}
-          {user?.role === "admin" && (
+          {user?.role === "root" && (
             <button
               className={page === "settings" ? "active" : ""}
               onClick={() => go("settings")}
@@ -516,13 +689,13 @@ function App() {
           )}
         </nav>
         <div className="head-actions">
-          <button
-            className="icon"
-            title="切换主题"
-            onClick={() => setDark(!dark)}
-          >
-            {dark ? <Sun /> : <Moon />}
-          </button>
+          {user&&domains.length>0&&<select className="domain-switcher" aria-label="当前域" value={domainId} onChange={(e)=>{localStorage.setItem("ij-domain-id",e.target.value);setDomainId(e.target.value);setSelected(null);}}>{domains.map((domain)=><option key={domain.id} value={domain.id}>{domain.name}</option>)}</select>}
+          <div className="theme-switcher" aria-label="主题模式">
+            <button className={theme === "light" ? "active" : ""} title="亮色模式" onClick={() => setTheme("light")}><Sun /></button>
+            <button className={theme === "dark" ? "active" : ""} title="暗色模式" onClick={() => setTheme("dark")}><Moon /></button>
+            <button className={theme === "meteor" ? "active" : ""} title="流星雨模式" onClick={() => setTheme("meteor")}><Sparkles /></button>
+            <button className={theme === "miku" ? "active" : ""} title="初音未来主题" aria-label="初音未来主题" onClick={() => setTheme("miku")}><Music2 /></button>
+          </div>
           {user ? (
             <div className="user-menu-wrap">
               <button className="user-btn" onClick={() => setUserMenu(!userMenu)}>
@@ -536,6 +709,8 @@ function App() {
                 <button onClick={() => { go("files"); setUserMenu(false); }}><FolderOpen />我的文件</button>
                 <button onClick={() => { go("account"); setUserMenu(false); }}><Wrench />账户设置</button>
                 <button onClick={() => { go("blog"); setUserMenu(false); }}><NotebookText />博客</button>
+                {isAdmin && <button onClick={() => { setTagManagerOpen(true); setUserMenu(false); }}><SlidersHorizontal />Tag 管理</button>}
+                <button onClick={() => { go("certifications"); setUserMenu(false); }}><ShieldCheck />认证中心</button>
                 <div className="dropdown-separator" />
                 <button onClick={logout}><LogOut />登出</button>
               </div>}
@@ -561,7 +736,8 @@ function App() {
         {page === "home" && (
           <HomePage
             problems={problems}
-            announcement={site.announcement}
+            announcement={site.homeAnnouncement || site.announcement}
+            carousel={site.carousel}
             user={user}
             go={go}
             open={open}
@@ -576,10 +752,29 @@ function App() {
             reload={load}
             error={setError}
             create={() => go("problem-create")}
+            pageSize={site.pagination?.problems || 100}
           />
         )}{" "}
-        {page === "problem-create" && user?.role === "admin" && (
+        {page === "problem-create" && isAdmin && (
           <ProblemCreatePage
+            error={setError}
+            cancel={() => go("problems")}
+            done={(problem) => {
+              load();
+              if (problem.question_type === "programming") {
+                history.pushState({}, "", `/problems/${encodeURIComponent(problem.id)}/tests`);
+                setTestProblemId(problem.id);
+                setPage("problem-tests");
+                scrollTo({ top: 0, left: 0, behavior: "auto" });
+              } else {
+                open(problem);
+              }
+            }}
+          />
+        )}{" "}
+        {page === "problem-tests" && isAdmin && testProblemId && (
+          <ProblemTestsPage
+            id={testProblemId}
             error={setError}
             cancel={() => go("problems")}
             done={(problem) => {
@@ -589,7 +784,17 @@ function App() {
           />
         )}{" "}
         {page === "contests" && (
-          <ContestsPage user={user} problems={problems} error={setError} openProblem={open} />
+          <ContestsPage user={user} problems={problems} error={setError} openProblem={open} createContest={() => go("contest-create")} />
+        )}{" "}
+        {page === "contest-create" && isAdmin && (
+          <section className="page contest-create-page">
+            <div className="page-title contest-create-title">
+              <span className="kicker">CONTEST ADMINISTRATION</span>
+              <h1>创建比赛</h1>
+              <p>配置比赛基础信息、赛制阶段与题目分类。</p>
+            </div>
+            <AdminPage mode="contests" standaloneContest problems={problems} reload={load} error={setError} onContestSaved={() => go("contests")} />
+          </section>
         )}{" "}
         {page === "training" && (
           <LearningPage kind="training" user={user} problems={problems} openProblem={open} error={setError} />
@@ -598,7 +803,9 @@ function App() {
           <LearningPage kind="homework" user={user} problems={problems} openProblem={open} error={setError} />
         )}{" "}
         {page === "ranking" && <RankingPage openProfile={openProfile} />}{" "}
-        {page === "records" && <RecordsPage />}{" "}
+        {page === "certifications" && user && <CertificationPage user={user} error={setError} />}{" "}
+        {page === "certification-guide" && <CertificationGuidePage start={() => user ? go("certifications") : setAuthOpen(true)} />}{" "}
+        {page === "records" && (recordId ? <SubmissionPage id={recordId} back={() => go("records")} /> : <RecordsPage />)}{" "}
         {page === "discuss" && (
           <DiscussPage
             user={user}
@@ -606,31 +813,38 @@ function App() {
             error={setError}
           />
         )}{" "}
-        {page === "settings" && user?.role === "admin" && adminVerified && (
+        {page === "settings" && user?.role === "root" && adminVerified && (
           <ControlPanel
+            user={user}
             problems={problems}
             reload={load}
             error={setError}
+            createProblem={() => go("problem-create")}
             changed={(v) => {
               setSite(v);
               document.title = v.name;
             }}
           />
         )}{" "}
-        {page === "domains" && user && (user.role !== "admin" || adminVerified) && (
+        {page === "domains" && user && (user.role !== "root" || adminVerified) && (
           <DomainsPage user={user} error={setError} changed={() => api.site().then(setSite).catch(() => {})} />
         )}{" "}
         {page === "account" && user && <AccountPage user={user} changed={setUser} error={setError} />}{" "}
-        {page === "messages" && user && <MessagesPage error={setError} />}{" "}
+        {page === "messages" && user && <MessagesPage error={setError} unreadChanged={setUnread} />}{" "}
         {page === "blog" && <BlogPage user={user} error={setError} />}{" "}
         {page === "files" && user && <FilesPage error={setError} />}{" "}
         {page === "profile" && profileId > 0 && <ProfilePage id={profileId} error={setError} />}{" "}
+        {page === "video-call" && user && <VideoCallPage me={user} peerId={profileId} report={setError} />}{" "}
+        {page === "about" && <AboutPage error={setError} />}{" "}
+        {page === "license" && <LicensePage error={setError} />}{" "}
+        {user && page !== "video-call" && <VideoCall me={user} peer={null} report={setError} />}{" "}
         {["queue", "status", "compatibility"].includes(page) && (
           <OperationsPage kind={page as "queue" | "status" | "compatibility"} />
         )}{" "}
         {page === "problem" && selected && (
           <ProblemPage
             problem={selected}
+            contestId={selectedContestId}
             user={user}
             login={() => setAuthOpen(true)}
             back={() => go("problems")}
@@ -642,7 +856,10 @@ function App() {
         <span className="footer-nav">
           <button onClick={() => go("queue")}>评测队列</button>
           <button onClick={() => go("status")}>服务状态</button>
-          <button onClick={() => go("compatibility")}>兼容模式</button>
+          <button type="button" className={`footer-compat-switch ${compatibility ? "active" : ""}`} role="switch" aria-checked={compatibility} onClick={toggleCompatibility}><i aria-hidden="true" />兼容模式</button>
+          <button onClick={() => go("compatibility")}>兼容说明</button>
+          <button onClick={() => go("about")}>关于</button>
+          <button onClick={() => go("license")}>许可证</button>
         </span>
         <span>
           Powered by ©2026{" "}
@@ -655,7 +872,7 @@ function App() {
             href="https://github.com/BrightWeb-Dev-Team/InfiniteJudge"
             target="_blank"
           >
-            InfiniteJudge v{communityVersion} Community
+            InfiniteJudge v{communityVersion.replace(/^v/i, "")} Miku Professional
           </a>
         </span>
       </footer>
@@ -668,7 +885,9 @@ function App() {
           }}
         />
       )}
-      {adminVerifyOpen && user?.role === "admin" && (
+      {announcementOpen && <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && setAnnouncementOpen(false)}><section className="announcement-modal"><button className="modal-close" onClick={() => setAnnouncementOpen(false)}><X /></button><span className="kicker">SITE ANNOUNCEMENT</span><h2>关于本站</h2><div className="announcement-modal-body"><Markdown>{site.domainAnnouncement}</Markdown></div><label className="toggle-line"><input type="checkbox" checked={announcementDismiss} onChange={(e) => setAnnouncementDismiss(e.target.checked)} />下次不再弹出</label><button className="primary" onClick={() => { localStorage.setItem("ij-dismissed-announcement", `${site.announcementStartsAt || ""}|${site.announcementEndsAt || ""}|${site.domainAnnouncement || ""}`); setAnnouncementOpen(false); }}>关闭且不再弹出</button></section></div>}
+      {tagManagerOpen && <TagManager close={() => setTagManagerOpen(false)} error={setError} />}
+      {adminVerifyOpen && user?.role === "root" && (
         <AdminVerifyModal
           close={() => {
             setAdminVerifyOpen(false);
@@ -689,6 +908,65 @@ function App() {
     </>
   );
 }
+function TagManager({ close, error }: { close: () => void; error: (s: string) => void }) {
+  const [tags, setTags] = useState<any[]>([]), [users, setUsers] = useState<any[]>([]), [label, setLabel] = useState(""), [color, setColor] = useState("#b08c00"), [scope, setScope] = useState<"global" | "personal">("personal"), [busy, setBusy] = useState(false), [targetUid, setTargetUid] = useState(""), [selectedTag, setSelectedTag] = useState("-1");
+  const load = () => Promise.all([api.adminTags(), api.tagUsers()]).then(([t, u]) => { setTags(t); setUsers(u); }).catch((e) => error(e.message));
+  useEffect(() => { void load(); }, []);
+  const create = async (e: React.FormEvent) => { e.preventDefault(); try { await api.createTag({ label, color, scope }); setLabel(""); await load(); } catch (e: any) { error(e.message); } };
+  const toggle = async (user: any, tagId: number) => { if (busy) return; const ids = user.tag_ids.includes(tagId) ? user.tag_ids.filter((x: number) => x !== tagId) : [...user.tag_ids, tagId]; setBusy(true); try { await api.updateUserTags(user.id, ids); await load(); } catch (e: any) { error(e.message); } finally { setBusy(false); } };
+  const assign = async (e: React.FormEvent) => { e.preventDefault(); const uid = Number(targetUid), tagId = Number(selectedTag); const user = users.find((u) => u.id === uid); if (!Number.isInteger(uid) || !user) return error("请输入有效的用户 UID"); if (tagId !== -1 && !tags.some((t) => t.id === tagId)) return error("请选择有效的 Tag"); await toggle(user, tagId); };
+  return <div className="modal-bg"><section className="announcement-modal tag-manager"><button className="modal-close" type="button" onClick={close}><X /></button><h2>Tag 管理</h2><form className="tag-create" onSubmit={create}><input required maxLength={24} placeholder="Tag 文字" value={label} onChange={(e) => setLabel(e.target.value)} /><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><select value={scope} onChange={(e) => setScope(e.target.value as any)} aria-label="标签范围"><option value="personal">指定用户</option><option value="global">全体用户</option></select><button className="primary"><Plus />新增</button></form><form className="tag-create" onSubmit={assign}><input required inputMode="numeric" pattern="[0-9]+" placeholder="输入用户 UID" value={targetUid} onChange={(e) => setTargetUid(e.target.value)} /><select value={selectedTag} onChange={(e) => setSelectedTag(e.target.value)} aria-label="选择标签"><option value="-1">作弊者</option>{tags.filter((tag) => !tag.builtin && tag.scope !== "global").map((tag) => <option key={tag.id} value={tag.id}>{tag.label}</option>)}</select><button className="primary" disabled={busy}><Plus />分配 / 取消</button></form><div className="tag-catalog">{tags.map((tag) => <span key={`${tag.id}-${tag.label}`} className="user-custom-tag" style={{ backgroundColor: tag.color }}>{tag.label}{tag.scope === "global" ? " · 全体" : ""}{!tag.builtin && <button type="button" onClick={async () => { try { await api.deleteTag(tag.id); await load(); } catch (e: any) { error(e.message); } }}>×</button>}</span>)}</div><div className="tag-user-list">{users.map((u) => <div key={u.id}><b>UID {u.id} · {u.username}</b><div>{u.tag_ids.filter((id: number) => id === -1 || tags.some((t) => t.id === id)).map((id: number) => { const tag = id === -1 ? { label: "作弊者", color: "#b08c00" } : tags.find((t) => t.id === id); return <span key={id} className={id === -1 ? "cheater-tag" : "user-custom-tag"} style={id === -1 ? undefined : { backgroundColor: tag?.color }}>{tag?.label}</span>; })}</div></div>)}</div></section></div>;
+}
+function CertificationPage({ user, error }: { user: User; error: (s: string) => void }) {
+  const admin = user.role === "admin" || user.role === "root";
+  const [manage, setManage] = useState(admin);
+  const [items,setItems]=useState<any[]>([]), [form,setForm]=useState({kind:"programming",title:"OI 赛事认证",displayText:"",description:"",color:"#d99a00"});
+  const [editingKind,setEditingKind]=useState<string|null>(null);
+  const load=()=> (admin&&manage?api.adminCertifications():api.certifications()).then(setItems).catch((e)=>error(e.message));
+  useEffect(()=>{void load();},[manage]);
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();try{const result=await api.applyCertification(form);setEditingKind(null);await load();error(result.status==="approved"?"认证信息已直接生效":"认证信息已提交审核");}catch(e:any){error(e.message);}};
+  const edit=(item:any)=>{setEditingKind(item.kind);setForm({kind:item.kind,title:item.title,displayText:item.display_text||"",description:item.description||"",color:item.color});window.scrollTo({top:0,behavior:"smooth"});};
+  return <section className="page certification-page">
+    <div className="page-title"><div><span className="kicker">VERIFICATION</span><h1>{manage?"管理认证":"认证中心"}</h1><p>{manage?"审核、撤销用户认证。":admin?"管理员的认证新建或修改后直接生效。":"申请或修改认证后需要管理员审核。"}</p></div>{admin&&<button className="plain" onClick={()=>{setManage(!manage);setEditingKind(null);}}>{manage?"我的认证":"返回审批"}</button>}</div>
+    {!manage&&<form className="cert-form" onSubmit={submit}>
+      <select disabled={editingKind!==null} value={form.kind+"|"+form.color+"|"+form.title} onChange={(e)=>{const [kind,color,title]=e.target.value.split("|");setForm({...form,kind,color,title});}}><option value="programming|#d99a00|OI 赛事认证">OI 赛事认证</option><option value="programming|#2daa75|ACM/ICPC 认证">ACM/ICPC 认证</option><option value="personal|#d34b4b|个人认证">个人认证</option><option value="personal|#6b4bbd|管理员认证">管理员认证</option></select>
+      {user.role === "root" && <label className="cert-color">认证颜色<input type="color" value={form.color} onChange={(e)=>setForm({...form,color:e.target.value})}/></label>}
+      <input required maxLength={80} placeholder="认证名称，如 bilibili 个人认证" value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/>
+      <input required maxLength={120} placeholder="认证展示文本，如 bilibili 创始人（站长）" value={form.displayText} onChange={(e)=>setForm({...form,displayText:e.target.value})}/>
+      <textarea maxLength={2000} placeholder="证明材料或说明（不会展示在个人主页）" value={form.description} onChange={(e)=>setForm({...form,description:e.target.value})}/>
+      <div className="cert-form-actions"><button className="primary"><ShieldCheck/>{editingKind?"保存修改":admin?"添加认证":"申请认证"}</button>{editingKind&&<button type="button" className="plain" onClick={()=>setEditingKind(null)}>取消编辑</button>}</div>
+    </form>}
+    <div className="cert-list">{items.map(x=><article key={x.id}><div><b>{x.username||x.title}</b>{x.username&&<span>{x.title}</span>}<p className="cert-display-text">{x.display_text||"未设置展示文本"}</p><p>{x.description||"暂无证明材料或说明"}</p></div><span className="verification-badge" style={{color:x.color}}><BadgeCheck/> {x.status==="approved"?"已认证":x.status==="pending"?"待审核":x.status==="revoked"?"已撤销":"未通过"}</span>{manage&&admin?<div className="cert-actions">{x.status!=="approved"&&<button className="primary" onClick={async()=>{await api.reviewCertification(x.id,"approved");load();}}>同意</button>}<button className="plain" onClick={async()=>{await api.reviewCertification(x.id,x.status==="approved"?"revoked":"rejected");load();}}>{x.status==="approved"?"撤销":"拒绝"}</button></div>:<button className="plain" onClick={()=>edit(x)}>编辑</button>}</article>)}</div>
+  </section>;
+}
+function CertificationGuidePage({ start }: { start: () => void }) {
+  return <section className="page certification-guide">
+    <div className="cert-guide-hero"><span className="kicker">VERIFICATION GUIDE</span><h1>认证说明</h1><p>Infinite Judge 通过认证标识帮助社区识别用户的程序设计经历和公开身份信息。认证仅表明已提交的特定信息通过审核，不代表平台对用户其他行为或观点背书。</p><button className="primary" onClick={start}><ShieldCheck />申请或管理认证</button></div>
+    <div className="cert-guide-layout">
+      <nav className="cert-guide-nav" aria-label="认证说明目录"><a href="#types">认证类型</a><a href="#requirements">申请要求</a><a href="#process">认证流程</a><a href="#display">展示与修改</a><a href="#privacy">材料与隐私</a><a className="danger" href="#integrity">真实性与责任</a></nav>
+      <article className="cert-guide-content">
+        <section id="types"><h2>认证类型</h2><h3>程序设计能力认证</h3><p>用于展示 OI、ACM/ICPC 等程序设计竞赛或算法学习经历。申请时请说明经历、成绩或奖项，并提供能够核验归属的材料。</p><h3>个人身份认证</h3><p>用于展示与社区、学校、团队、项目或公开职务有关的身份。认证文本应准确、克制，不得制造容易误解的夸大表述。</p></section>
+        <section id="requirements"><h2>申请要求</h2><ul><li>认证信息必须属于申请者本人，且在申请时仍然准确。</li><li>认证名称应概括认证类别，展示文本应简洁说明已核验的身份或经历。</li><li>证明材料需要清晰、完整，并能同时对应申请者与申请内容。</li><li>如信息发生变化，请及时编辑认证并重新提交。</li></ul></section>
+        <section id="process"><h2>认证流程</h2><ol><li>进入认证中心，选择认证类型。</li><li>填写认证名称、公开展示文本和仅供审核的证明说明。</li><li>普通用户提交后进入人工审核；管理员会根据材料核对申请内容。</li><li>审核通过后，认证标识和文本将在排行榜与个人主页展示。</li></ol></section>
+        <section id="display"><h2>展示与修改</h2><p>将鼠标停留在用户名旁的认证图标上，可查看完整认证名称和展示文本。点击图标可随时返回本说明页。</p><p>普通用户修改已通过的认证后，新内容需要重新审核；管理员的认证修改后直接生效。平台可在信息失效、存疑或违反规则时撤销认证。</p></section>
+        <section id="privacy"><h2>材料与隐私</h2><p>申请页中的“证明材料或说明”仅用于认证审核，不会作为公开认证文本展示。请只提供完成核验所必需的信息，并对身份证件号码、住址等无关敏感信息进行遮挡。</p></section>
+        <section id="integrity" className="cert-integrity"><h2>真实性与责任</h2><p><strong>严禁伪造材料、冒用他人身份、虚构奖项或职务，也不得通过剪辑、遮挡或误导性表述影响审核判断。</strong></p><p>一经发现虚假认证，平台将立即撤销相关认证，并可对账号采取限制功能、禁言、暂停或永久封禁等处置。对多次伪造、有组织欺骗、侵害他人权益或涉嫌违法的情形，平台将保留固定证据、向相关方通报并依法追究责任的权利。</p></section>
+      </article>
+    </div>
+  </section>;
+}
+function VideoCallPage({ me, peerId, report }: { me: User; peerId: number; report: (message: string) => void }) {
+  const [peer, setPeer] = useState<User | null>(null);
+  const [online, setOnline] = useState<boolean | null>(null);
+  useEffect(() => { if (peerId) api.userProfile(peerId).then(setPeer).catch(() => {}); }, [peerId]);
+  useEffect(() => { if (!peerId) return; let stopped = false; const poll = () => api.userPresence(peerId).then((value) => { if (!stopped) setOnline(value.online); }).catch(() => {}).finally(() => { if (!stopped) window.setTimeout(poll, 15000); }); void poll(); return () => { stopped = true; }; }, [peerId]);
+  const leaveCall = async (reason: "ended" | "offline") => {
+    if (reason === "offline") await api.sendMessage({ recipientId: peerId, content: "系统提示：对方当前不在线，视频通话未接通。" }).catch(() => {});
+    history.pushState({}, "", "/messages");
+    dispatchEvent(new PopStateEvent("popstate"));
+  };
+  return <section className="page video-call-page"><div className="page-title"><div><span className="kicker">VIDEO CALL</span><h1>视频通话</h1><p>与 {peer?.username || `UID ${peerId}`} 进行视频通话。</p></div><div className="video-presence"><i className={online ? "online" : "offline"} />{online === null ? "检查中" : online ? "在线" : "不在线"}<button className="plain" onClick={() => history.back()}>返回消息</button></div></div><div className="video-call-stage"><VideoCall me={me} peer={peer ? { uid: peer.id, name: peer.username, avatar: peer.avatar } : { uid: peerId, name: `UID ${peerId}` }} report={report} autoStart onEnded={leaveCall} /></div></section>;
+}
 function AdminVerifyModal({
   close,
   done,
@@ -699,6 +977,8 @@ function AdminVerifyModal({
   const [password, setPassword] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const passkeyVerify=async()=>{setBusy(true);setError("");try{const {options,ceremony}=await api.adminPasskeyOptions();const response=await startAuthentication({optionsJSON:options});const result=await api.verifyAdminPasskey(ceremony,response);sessionStorage.setItem("ij-admin-verification",result.token);done(result.expiresAt);}catch(e:any){if(!String(e.message||"").includes("尚未设置"))setError(e.name==="NotAllowedError"?"已取消通行密钥验证，可使用密码继续":e.message);}finally{setBusy(false);}};
+  useEffect(()=>{void passkeyVerify();},[]);
   return (
     <div className="modal-bg">
       <form
@@ -725,7 +1005,7 @@ function AdminVerifyModal({
           <ShieldCheck />
         </span>
         <h2>管理员二次验证</h2>
-        <p>为保护控制面板，请再次输入当前管理员密码。验证在 10 分钟后失效。</p>
+        <p>为保护控制面板，请验证当前管理员身份。验证在 4 小时后失效。</p>
         <label>
           管理员密码
           <input
@@ -741,6 +1021,7 @@ function AdminVerifyModal({
           <ShieldCheck />
           {busy ? "验证中..." : "验证并进入"}
         </button>
+        <button type="button" className="plain oauth-button" disabled={busy} onClick={passkeyVerify}><KeyRound />使用通行密钥验证</button>
       </form>
     </div>
   );
@@ -767,9 +1048,9 @@ function LearningPage({ kind, user, problems, openProblem, error }: { kind: "tra
   async function remove(id: number) { if (!confirm(`确定删除这个${labels.title}吗？`)) return; try { await api.deleteLearning(kind, id); setForm(null); setSelected(null); await load(); } catch (e: any) { error(e.message); } }
   const status = (item: any) => { const now = Date.now(), start = item.starts_at ? new Date(item.starts_at).getTime() : 0, end = item.ends_at ? new Date(item.ends_at).getTime() : Infinity; return start > now ? "未开始" : end < now ? "已结束" : "进行中"; };
   return <section className="page learning-page">
-    <div className="page-title discussion-title"><div><span className="kicker">{labels.kicker}</span><h1>{labels.title}</h1><p>{training ? "按计划组织题目，循序推进算法训练。" : "集中查看题目要求与截止时间，按时完成作业。"}</p></div>{user?.role === "admin" && <button className="primary" onClick={() => { setForm({ ...blank }); setSelected(null); }}><Plus />{labels.create}</button>}</div>
-    {form ? <form className="learning-editor" onSubmit={save}><div className="learning-editor-head"><h2>{form.id ? `编辑${labels.title}` : labels.create}</h2><button type="button" className="icon-btn" onClick={() => setForm(null)}><X /></button></div><div className="form-grid"><label>标题<input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label>{training ? "开始时间（可选）" : "发布时间（可选）"}<input type="datetime-local" value={form.starts_at || ""} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} /></label><label>结束/截止时间（可选）<input type="datetime-local" value={form.ends_at || ""} onChange={(e) => setForm({ ...form, ends_at: e.target.value })} /></label></div><label>说明（Markdown）<textarea rows={7} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label><fieldset><legend>选择题目</legend><div className="learning-picker">{problems.map((p) => <label key={p.id}><input type="checkbox" checked={form.problems.includes(p.id)} onChange={(e) => setForm({ ...form, problems: e.target.checked ? [...form.problems, p.id] : form.problems.filter((id: string) => id !== p.id) })} /><span><b>{p.id}</b>{p.title}</span></label>)}</div></fieldset><div className="form-actions"><button className="primary"><Check />保存</button>{form.id && <button type="button" className="danger" onClick={() => remove(form.id)}><Trash2 />删除</button>}</div></form>
-    : selected ? <div className="learning-detail"><button className="text-btn" onClick={() => setSelected(null)}><ArrowLeft />返回列表</button><div className="learning-detail-head"><div><span className="tag">{status(selected)}</span><h2>{selected.title}</h2><p>创建者：{selected.creator}</p></div>{user?.role === "admin" && <button className="plain" onClick={() => edit(selected.id)}>编辑</button>}</div>{selected.starts_at && <p className="learning-time"><Clock />开始：{new Date(selected.starts_at).toLocaleString()}</p>}{selected.ends_at && <p className="learning-time"><Clock />{training ? "结束" : "截止"}：{new Date(selected.ends_at).toLocaleString()}</p>}<div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.description || "暂无说明"}</ReactMarkdown></div><h3>题目列表</h3><div className="contest-problems">{selected.problems.length ? selected.problems.map((entry: any, index: number) => { const problem = problems.find((p) => p.id === entry.id); return <button key={entry.id} onClick={() => problem && openProblem(problem)}><b>{index + 1}</b><span>{entry.id} {entry.title}</span><ChevronRight /></button>; }) : <div className="empty">暂未添加题目</div>}</div></div>
+    <div className="page-title discussion-title"><div><span className="kicker">{labels.kicker}</span><h1>{labels.title}</h1><p>{training ? "按计划组织题目，循序推进算法训练。" : "集中查看题目要求与截止时间，按时完成作业。"}</p></div>{(user?.role === "admin" || user?.role === "root") && <button className="primary" onClick={() => { setForm({ ...blank }); setSelected(null); }}><Plus />{labels.create}</button>}</div>
+    {form ? <form className="learning-editor" onSubmit={save}><div className="learning-editor-head"><h2>{form.id ? `编辑${labels.title}` : labels.create}</h2><button type="button" className="icon-btn" onClick={() => setForm(null)}><X /></button></div><div className="form-grid"><label>标题<input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label>{training ? "开始时间（可选）" : "发布时间（可选）"}<WheelDateTime optional value={form.starts_at || ""} onChange={(value) => setForm({ ...form, starts_at: value })} /></label><label>结束/截止时间（可选）<WheelDateTime optional value={form.ends_at || ""} onChange={(value) => setForm({ ...form, ends_at: value })} /></label></div><label>说明（Markdown）<textarea rows={7} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} onKeyDown={(e) => handleEditorTab(e, form.description, (next) => setForm({ ...form, description: next }))} /></label><fieldset><legend>选择题目</legend><div className="learning-picker">{problems.map((p) => <label key={p.id}><input type="checkbox" checked={form.problems.includes(p.id)} onChange={(e) => setForm({ ...form, problems: e.target.checked ? [...form.problems, p.id] : form.problems.filter((id: string) => id !== p.id) })} /><span><b>{p.id}</b>{p.title}</span></label>)}</div></fieldset><div className="form-actions"><button className="primary"><Check />保存</button>{form.id && <button type="button" className="danger" onClick={() => remove(form.id)}><Trash2 />删除</button>}</div></form>
+    : selected ? <div className="learning-detail"><button className="text-btn" onClick={() => setSelected(null)}><ArrowLeft />返回列表</button><div className="learning-detail-head"><div><span className="tag">{status(selected)}</span><h2>{selected.title}</h2><p>创建者：{selected.creator}</p></div>{(user?.role === "admin" || user?.role === "root") && <button className="plain" onClick={() => edit(selected.id)}>编辑</button>}</div>{selected.starts_at && <p className="learning-time"><Clock />开始：{new Date(selected.starts_at).toLocaleString()}</p>}{selected.ends_at && <p className="learning-time"><Clock />{training ? "结束" : "截止"}：{new Date(selected.ends_at).toLocaleString()}</p>}<RichMarkdown>{selected.description || "暂无说明"}</RichMarkdown><h3>题目列表</h3><div className="contest-problems">{selected.problems.length ? selected.problems.map((entry: any, index: number) => { const problem = problems.find((p) => p.id === entry.id); return <button key={entry.id} onClick={() => problem && openProblem(problem)}><b>{index + 1}</b><span>{entry.id} {entry.title}</span><ChevronRight /></button>; }) : <div className="empty">暂未添加题目</div>}</div></div>
     : items.length ? <div className="learning-list">{items.map((item) => <article key={item.id} onClick={() => show(item.id)}><div><span className="tag">{status(item)}</span><h2>{item.title}</h2><p>{item.description || "暂无说明"}</p></div><div className="learning-meta">{item.ends_at && <span><Clock />{training ? "结束" : "截止"} {new Date(item.ends_at).toLocaleString()}</span>}<span>{item.creator}</span><ChevronRight /></div></article>)}</div>
     : <div className="large-empty"><BookOpen /><p>{labels.empty}</p>{user?.role !== "admin" && <small>管理员创建后会显示在这里。</small>}</div>}
   </section>;
@@ -779,12 +1060,33 @@ function RankingPage({ openProfile }: { openProfile: (id: number) => void }) {
 }
 function RpRanking({ compact = false, openProfile }: { compact?: boolean; openProfile?: (id: number) => void }) {
   const [rows, setRows] = useState<any[]>([]); useEffect(() => { api.ranking().then(setRows).catch(() => {}); }, []);
-  return <div className={compact ? "rp-board compact" : "rp-board"}><div className="rp-head"><span>排名</span><span>用户</span><span>通过</span><span>RP</span></div>{rows.slice(0, compact ? 8 : 100).map((row, index) => <button type="button" className="rp-row" key={row.id} onClick={() => openProfile?.(row.id)}><b>{index + 1}</b><span className="rp-user">{row.avatar ? <img src={row.avatar} /> : <i>{row.username[0].toUpperCase()}</i>}{row.username}</span><span>{row.solved}</span><strong>{row.rp}</strong></button>)}</div>;
+  const guide=(event:React.MouseEvent|React.KeyboardEvent)=>{event.stopPropagation();history.pushState({},"","/certifications/guide");dispatchEvent(new PopStateEvent("popstate"));};
+  return <div className={compact ? "rp-board compact" : "rp-board"}><div className="rp-head"><span>排名</span><span>用户</span><span>通过</span><span>RP</span></div>{rows.slice(0, compact ? 8 : 100).map((row, index) => <div role="button" tabIndex={0} className="rp-row" key={row.id} onClick={() => openProfile?.(row.id)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" ")openProfile?.(row.id);}}><b>{index + 1}</b><span className="rp-user">{row.avatar ? <img src={row.avatar} /> : <i>{row.username[0].toUpperCase()}</i>}{row.username}{row.certifications?.map((cert: any) => <button type="button" key={cert.id} className="verification-icon certification-link" style={{color:cert.color}} data-certification={`${cert.title}\n${cert.display_text||"已通过认证"}`} aria-label={`${cert.title}：${cert.display_text||"已通过认证"}，点击查看认证说明`} onKeyDown={(e)=>e.stopPropagation()} onClick={guide}><BadgeCheck/></button>)}{row.tags?.map((tag: any) => <em key={tag.id} className="user-custom-tag" style={{ backgroundColor: tag.color }}>{tag.label}</em>)}{row.cheater ? <em className="cheater-tag">作弊者</em> : null}</span><span>{row.solved}</span><strong>{row.rp}</strong></div>)}</div>;
 }
 function Hitokoto() {
   const [quote, setQuote] = useState({ text: "正在获取一言...", from: "", url: "https://hitokoto.cn" });
   useEffect(() => { api.hitokoto().then(setQuote).catch(() => setQuote({ text: "我之所以想变强，是为了活得轻松写意。", from: "Infinite Judge", url: "https://hitokoto.cn" })); }, []);
   return <section className="hitokoto"><h2>一言</h2><blockquote>{quote.text}</blockquote>{quote.from && <cite>— {quote.from}</cite>}</section>;
+}
+function AboutPage({ error }: { error: (message: string) => void }) {
+  const [about, setAbout] = useState<{ content: string; version: string; name: string } | null>(null);
+  useEffect(() => { api.about().then(setAbout).catch((e) => error(e.message)); }, []);
+  if (!about) return <section className="page setup-loading">正在加载关于页面...</section>;
+  const content = about.content || `# 关于 ${about.name}\n\n${about.name} 是一个在线评测与算法训练平台。`;
+  const version = about.version.replace(/^v/i, "");
+  return <section className="page about-page">
+    <header className="about-header"><div><span className="kicker">ABOUT</span><h1>{about.name}</h1><p>在线评测、算法训练与竞赛管理平台</p></div><span className="about-version">InfiniteJudge v{version} Miku Professional</span></header>
+    <article className="about-content"><RichMarkdown>{content}</RichMarkdown></article>
+  </section>;
+}
+function LicensePage({ error }: { error: (message: string) => void }) {
+  const [license, setLicense] = useState<{ content: string; name: string } | null>(null);
+  useEffect(() => { api.license().then(setLicense).catch((e) => error(e.message)); }, []);
+  if (!license) return <section className="page setup-loading">正在加载许可证...</section>;
+  return <section className="page legal-page">
+    <header className="legal-header"><span className="kicker">LICENSE</span><h1>{license.name}</h1><p>版本 1.0 · 2026 年</p></header>
+    <article className="legal-document">{license.content.split(/\n{2,}/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</article>
+  </section>;
 }
 function OperationsPage({
   kind,
@@ -792,7 +1094,9 @@ function OperationsPage({
   kind: "queue" | "status" | "compatibility";
 }) {
   const [health, setHealth] = useState<any>(null),
-    [rows, setRows] = useState<Submission[]>([]);
+    [rows, setRows] = useState<Submission[]>([]),
+    [compatibility, setCompatibility] = useState(() => localStorage.getItem("ij-compatibility-mode") === "1");
+  const toggleCompatibility = () => { const next = !compatibility; setCompatibility(next); localStorage.setItem("ij-compatibility-mode", next ? "1" : "0"); document.documentElement.toggleAttribute("data-compatibility", next); window.dispatchEvent(new CustomEvent("ij-compatibility-change", { detail: next })); };
   useEffect(() => {
     api.health().then(setHealth);
     if (kind === "queue") api.submissions().then(setRows);
@@ -824,7 +1128,7 @@ function OperationsPage({
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td>#{r.id}</td>
+                  <td><a className="submission-id-link" href={`/records/${r.id}`} onClick={(event) => { event.preventDefault(); history.pushState({}, "", `/records/${r.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}>#{r.id}</a></td>
                   <td>{r.title}</td>
                   <td>{r.user}</td>
                   <td>{r.language}</td>
@@ -845,7 +1149,7 @@ function OperationsPage({
           </table>
         )}
         {kind === "status" && (
-          <div className="service-grid">
+          <><div className="service-grid">
             <section>
               <Activity />
               <b>API 服务</b>
@@ -866,10 +1170,11 @@ function OperationsPage({
               <b>插件</b>
               <span>{health?.plugins?.length ?? 0} 个已加载</span>
             </section>
-          </div>
+          </div><div className="server-list"><div className="server-list-title"><Activity /><b>Servers</b><span>{health?.servers?.length ?? 0} 台在线</span></div><table><thead><tr><th>ID</th><th>当前状态</th><th>系统信息</th><th>CPU 信息</th><th>内存信息</th><th>Handled requests</th><th>运行时间</th></tr></thead><tbody>{health?.servers?.map((server: any) => <tr key={server.id}><td><code>{server.id}</code></td><td><span className="server-online"><i />{server.status}</span></td><td>{server.system}</td><td>{server.cpu}</td><td>{(server.memory_used / 1073741824).toFixed(1)} GiB / {(server.memory_total / 1073741824).toFixed(1)} GiB</td><td>{server.handled_requests}</td><td>{Math.floor(server.uptime / 86400)}天 {Math.floor(server.uptime % 86400 / 3600)}小时 {Math.floor(server.uptime % 3600 / 60)}分</td></tr>) || <tr><td colSpan={7}>正在读取服务器信息...</td></tr>}</tbody></table></div></>
         )}
         {kind === "compatibility" && (
           <div className="compat-list">
+            <section className="compat-toggle"><Activity /><div><b>老浏览器兼容模式</b><p>关闭流星雨、动画、过渡、背景模糊和透明玻璃效果，降低图形性能要求。</p></div><button type="button" className={compatibility ? "primary" : "plain"} onClick={toggleCompatibility}>{compatibility ? "已开启 · 点击关闭" : "开启兼容模式"}</button></section>
             <section>
               <Check />
               <div>
@@ -913,15 +1218,20 @@ function AuthModal({
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
     [emailVerification, setEmailVerification] = useState(false),
+    [brightwebOauth, setBrightwebOauth] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  useEffect(() => { api.authConfig().then((value) => setEmailVerification(value.emailVerification)).catch(() => {}); }, []);
+  useEffect(() => { api.authConfig().then((value) => { setEmailVerification(value.emailVerification); setBrightwebOauth(Boolean(value.brightwebOauth?.enabled)); }).catch(() => {}); }, []);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const r = mode === "login" ? await api.login(name, password) : await api.register(name, password, email, code);
+      let r;
+      if(mode==="login"){
+        try{const {options,ceremony}=await api.passkeyLoginOptions(name);const response=await startAuthentication({optionsJSON:options});r=await api.passkeyLogin(ceremony,response);}
+        catch(passkeyError:any){if(passkeyError.name==="NotAllowedError")throw new Error("已取消通行密钥登录");if(!password)throw passkeyError;r=await api.login(name,password);}
+      }else r=await api.register(name,password,email,code);
       localStorage.setItem("ij-token", r.token);
       done(r.user);
     } catch (e: any) {
@@ -974,6 +1284,8 @@ function AuthModal({
           <label>验证码<div className="email-code-row"><input required value={code} onChange={(e) => setCode(e.target.value)} /><button type="button" className="plain" onClick={async () => { try { await api.sendEmailCode(email); setError("验证码已发送"); } catch (e: any) { setError(e.message); } }}>发送验证码</button></div></label>
         </>}
         {error && <div className="form-error">{error}</div>}
+        {mode === "login" && brightwebOauth && <button type="button" className="plain oauth-button" onClick={() => { location.href = "/api/auth/brightweb/start"; }}>使用 BrightWeb 登录</button>}
+        {mode === "login" && <button type="button" className="plain oauth-button" disabled={busy || !name.trim()} onClick={async () => { setBusy(true); setError(""); try { const { options, ceremony } = await api.passkeyLoginOptions(name); const response = await startAuthentication({ optionsJSON: options }); const r = await api.passkeyLogin(ceremony, response); localStorage.setItem("ij-token", r.token); done(r.user); } catch (e: any) { setError(e.name === "NotAllowedError" ? "已取消通行密钥登录" : e.message); } finally { setBusy(false); } }}><KeyRound />使用通行密钥登录</button>}
         <button className="primary" disabled={busy}>
           {busy ? "请稍候..." : mode === "login" ? "登录" : "注册"}
         </button>
@@ -991,6 +1303,7 @@ function AuthModal({
 function HomePage({
   problems,
   announcement,
+  carousel,
   user,
   go,
   open,
@@ -998,6 +1311,7 @@ function HomePage({
 }: {
   problems: Problem[];
   announcement?: string;
+  carousel?: SiteConfig["carousel"];
   user: User | null;
   go: (p: Exclude<Page, "problem" | "profile">) => void;
   open: (p: Problem) => void;
@@ -1012,8 +1326,9 @@ function HomePage({
         <section className="home-ranking"><div className="section-heading"><div><span className="kicker">RATING</span><h2>RP 排行榜</h2></div><button className="plain" onClick={() => go("ranking")}>查看全部<ChevronRight /></button></div><RpRanking compact /></section>
       </div>
       <aside className="hydro-side">
+        <Carousel items={carousel} />
         <Hitokoto />
-        <Countdown admin={user?.role === "admin"} error={error} />
+        <Countdown admin={(user?.role === "admin" || user?.role === "root")} error={error} />
         <section>
           <h2>最新题目</h2>
           {problems.slice(0, 4).map((p) => (
@@ -1039,6 +1354,16 @@ function HomePage({
   );
 }
 
+function Carousel({ items }: { items?: SiteConfig["carousel"] }) {
+  const valid = (items || []).filter((item) => item?.image);
+  const [index, setIndex] = useState(0);
+  useEffect(() => { if (valid.length < 2) return; const timer = window.setInterval(() => setIndex((value) => (value + 1) % valid.length), 5000); return () => window.clearInterval(timer); }, [valid.length]);
+  if (!valid.length) return null;
+  const item = valid[index % valid.length];
+  const content = <><img src={item.image} alt={item.title || ""} /><div className="home-carousel-caption">{item.title}</div><div className="home-carousel-dots">{valid.map((_, i) => <button type="button" className={i === index ? "active" : ""} onClick={() => setIndex(i)} key={i} aria-label={`第${i + 1}张`} />)}</div></>;
+  return <section className="home-carousel">{item.link ? <a href={item.link} target="_blank" rel="noreferrer">{content}</a> : content}</section>;
+}
+
 function Countdown({
   admin,
   error,
@@ -1048,7 +1373,7 @@ function Countdown({
 }) {
   const [configs, setConfigs] = useState<CountdownConfig[]>([]),
     [now, setNow] = useState(Date.now()),
-    [editing, setEditing] = useState(false);
+    [editing, setEditing] = useState<CountdownConfig | null>(null);
   useEffect(() => {
     api
       .countdown()
@@ -1066,7 +1391,7 @@ function Countdown({
             <button
               className="countdown-settings"
               title="添加倒计时"
-              onClick={() => setEditing(true)}
+              onClick={() => setEditing({ title: "", target: new Date(Date.now() + 864e5).toISOString() })}
             >
               <Settings2 />
             </button>
@@ -1076,22 +1401,23 @@ function Countdown({
           {configs.length ? configs.map((config) => {
             const left = new Date(config.target).getTime() - now;
             const days = Math.max(0, Math.ceil(left / 864e5));
-            return <div key={config.id || config.title}>
+            return <div className="countdown-compact-row" key={config.id || config.title}>
               <span title={new Date(config.target).toLocaleString()}>{config.title}</span>
               <b>{left <= 0 ? "已结束" : `还有 ${days} 天`}</b>
+              {admin&&<div className="countdown-row-actions"><button type="button" title={`编辑 ${config.title}`} onClick={()=>setEditing(config)}><Settings2/></button><button type="button" className="danger" title={`删除 ${config.title}`} onClick={async()=>{if(!config.id||!confirm(`确定删除倒计时“${config.title}”？`))return;try{await api.deleteCountdown(config.id);setConfigs(current=>current.filter(item=>item.id!==config.id));}catch(e:any){error(e.message);}}}><Trash2/></button></div>}
             </div>;
           }) : <p className="muted">暂无倒计时</p>}
         </div>
       </section>
       {editing && (
         <CountdownModal
-          value={{ title: "", target: new Date(Date.now() + 864e5).toISOString() }}
-          close={() => setEditing(false)}
+          value={editing}
+          close={() => setEditing(null)}
           save={async (next) => {
             try {
               const saved = await api.updateCountdown(next);
-              setConfigs((current) => [...current, saved].sort((a, b) => +new Date(a.target) - +new Date(b.target)));
-              setEditing(false);
+              setConfigs((current) => [...current.filter(item=>item.id!==saved.id), saved].sort((a, b) => +new Date(a.target) - +new Date(b.target)));
+              setEditing(null);
             } catch (e: any) {
               error(e.message);
             }
@@ -1127,6 +1453,7 @@ function CountdownModal({
         onSubmit={(e) => {
           e.preventDefault();
           save({
+            id: value.id,
             title: title.trim() || "自定义倒计时",
             target: new Date(target).toISOString(),
           });
@@ -1138,8 +1465,8 @@ function CountdownModal({
         <span className="brand-mark">
           <Clock />
         </span>
-        <h2>设置倒计时</h2>
-        <p>自定义首页显示的活动名称和目标时间。</p>
+        <h2>{value.id?"编辑倒计时":"添加倒计时"}</h2>
+        <p>{value.id?"修改已有倒计时的名称和目标时间。":"自定义首页显示的活动名称和目标时间。"}</p>
         <label>
           倒计时名称
           <input
@@ -1152,14 +1479,9 @@ function CountdownModal({
         </label>
         <label>
           目标时间
-          <input
-            required
-            type="datetime-local"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-          />
+          <WheelDateTime value={target} onChange={setTarget}/>
         </label>
-        <button className="primary">保存倒计时</button>
+        <button className="primary">{value.id?"保存修改":"添加倒计时"}</button>
       </form>
     </div>
   );
@@ -1171,6 +1493,7 @@ function ProblemsPage({
   reload,
   error,
   create,
+  pageSize,
 }: {
   problems: Problem[];
   open: (p: Problem) => void;
@@ -1178,10 +1501,12 @@ function ProblemsPage({
   reload: () => void;
   error: (s: string) => void;
   create: () => void;
+  pageSize: number;
 }) {
   const [q, setQ] = useState(""),
     [difficulty, setDifficulty] = useState("全部"),
-    [managing, setManaging] = useState(false);
+    [managing, setManaging] = useState(false),
+    [currentPage, setCurrentPage] = useState(1), [crossProblem,setCrossProblem]=useState<Problem|null>(null);
   const list = useMemo(
     () =>
       problems.filter(
@@ -1193,6 +1518,11 @@ function ProblemsPage({
       ),
     [q, difficulty, problems],
   );
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+  const visible = list.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => setCurrentPage(1), [q, difficulty, pageSize]);
+  useEffect(()=>{if(!q.trim().startsWith("*"))return setCrossProblem(null);api.problem(q.trim()).then(setCrossProblem).catch(()=>setCrossProblem(null));},[q]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
   return (
     <section className="page">
       <div className="page-title discussion-title">
@@ -1201,7 +1531,7 @@ function ProblemsPage({
           <h1>题库</h1>
           <p>在精选题目中找到你的下一次突破。</p>
         </div>
-        {user?.role === "admin" && (
+        {(user?.role === "admin" || user?.role === "root") && (
           <button className="plain" onClick={() => setManaging(!managing)}>
             <ShieldCheck />
             {managing ? "返回题库" : "管理题目"}
@@ -1256,12 +1586,12 @@ function ProblemsPage({
                 </tr>
               </thead>
               <tbody>
-                {list.map((p) => (
+                {(q.trim().startsWith("*")?(crossProblem?[crossProblem]:[]):visible).map((p) => (
                   <tr key={p.id} onClick={() => open(p)}>
                     <td className="mono">{p.id}</td>
                     <td>
                       <b>{p.title}</b>
-                      <small>{p.tags.join(" · ")}</small>
+                      <small>{p.source_domain?`引用自 ${p.source_domain} · `:""}{p.tags.join(" · ")}</small>
                     </td>
                     <td>
                       <span className={diffClass(p.difficulty)}>
@@ -1281,19 +1611,37 @@ function ProblemsPage({
             </table>
             {!list.length && <div className="empty">没有匹配的题目</div>}
           </div>
+          {list.length > pageSize && <nav className="problem-pagination" aria-label="题库分页"><button className="plain" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)}>上一页</button><span>第 {currentPage} / {totalPages} 页 · 共 {list.length} 题</span><button className="plain" disabled={currentPage === totalPages} onClick={() => setCurrentPage((p) => p + 1)}>下一页</button></nav>}
         </>
       )}
     </section>
   );
 }
+const codeKeywords: Record<string, RegExp> = {
+  cpp: /^(?:alignas|alignof|and|asm|auto|bool|break|case|catch|char|class|const|constexpr|continue|default|delete|do|double|else|enum|explicit|extern|false|float|for|friend|if|inline|int|long|namespace|new|nullptr|operator|or|private|protected|public|register|return|short|signed|sizeof|static|struct|switch|template|this|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)$/,
+  python: /^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)$/,
+  java: /^(?:abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|false|final|finally|float|for|if|implements|import|instanceof|int|interface|long|native|new|null|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|true|try|void|volatile|while)$/
+};
+function highlightCode(code: string, lang: "cpp" | "python" | "java") {
+  const token = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b)/g;
+  const parts: React.ReactNode[] = []; let end = 0;
+  code.replace(token, (value, _match, offset) => {
+    parts.push(code.slice(end, offset));
+    const cls = value.startsWith("//") || value.startsWith("/*") || (lang === "python" && value.startsWith("#")) ? "syntax-comment" : value.startsWith("#") ? "syntax-preprocessor" : /^["']/.test(value) ? "syntax-string" : /^\d/.test(value) ? "syntax-number" : codeKeywords[lang].test(value) ? "syntax-keyword" : "syntax-name";
+    parts.push(<span className={cls} key={`${offset}-${value}`}>{value}</span>); end = offset + value.length; return value;
+  });
+  parts.push(code.slice(end)); return parts;
+}
 function ProblemPage({
   problem,
+  contestId,
   user,
   login,
   back,
   refresh,
 }: {
   problem: Problem;
+  contestId?: number;
   user: User | null;
   login: () => void;
   back: () => void;
@@ -1302,21 +1650,34 @@ function ProblemPage({
   const [lang, setLang] = useState<"cpp" | "python" | "java">("cpp"),
     [code, setCode] = useState(starter.cpp),
     [result, setResult] = useState<any>(null),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [blocked, setBlocked] = useState(false),
+    [editorFontSize, setEditorFontSize] = useState(() => { const saved = Number(localStorage.getItem("ij-editor-font-size")); return saved >= 10 && saved <= 24 ? saved : 12; }),
+    [answer, setAnswer] = useState<any[]>([]),
+    [showAntiCheatNotice, setShowAntiCheatNotice] = useState(Boolean(problem.anti_cheat_enabled && (!user || !["root", "admin"].includes(user.role))));
+  useEffect(() => {
+    if (!user || !problem.anti_cheat_enabled || ["root", "admin"].includes(user.role)) return;
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      api.reportFocus(problem.id, contestId).then((r) => { setBlocked(r.blocked); if (r.blocked) setResult({ status: "Error", error: "切屏次数已达上限，已禁止答题并将成绩记为 0" }); }).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [problem.id, problem.anti_cheat_enabled, user]);
   function language(v: "cpp" | "python" | "java") {
     setLang(v);
     setCode(starter[v]);
   }
+  function changeEditorFontSize(size: number) { setEditorFontSize(size); localStorage.setItem("ij-editor-font-size", String(size)); }
   async function submit() {
     if (!user) return login();
+    if (blocked) return;
     setBusy(true);
     try {
-      const s = await api.submit({
-        problem_id: problem.id,
-        language: lang,
-        source: code,
-      });
+      const objective=problem.question_type && problem.question_type!=="programming";
+      const s = await api.submit(objective ? {problem_id:problem.id,answer,contest_id:contestId} : {problem_id:problem.id,language:lang,source:code,contest_id:contestId});
       setResult(s);
+      if(objective){setBusy(false);refresh();return;}
       let tries = 0;
       const poll = setInterval(async () => {
         const r = await api.submission(s.id);
@@ -1334,6 +1695,16 @@ function ProblemPage({
   }
   return (
     <section className="problem-view">
+      {showAntiCheatNotice && (
+        <div className="modal-bg" role="dialog" aria-modal="true">
+          <div className="auth-modal anti-cheat-notice">
+            <h2>已开启反作弊</h2>
+            <p>本题会监控你是否切换浏览器标签页或窗口。</p>
+            <p>切屏达到 {problem.anti_cheat_limit || 3} 次后将禁止继续答题，相关成绩记为 0 分。</p>
+            <button className="primary" onClick={() => setShowAntiCheatNotice(false)}>我已了解，开始答题</button>
+          </div>
+        </div>
+      )}
       <button className="back" onClick={back}>
         <ArrowLeft />
         返回题库
@@ -1355,15 +1726,10 @@ function ProblemPage({
               {problem.time_limit} ms
             </span>
             <span>内存 {problem.memory_limit} MB</span>
-            <span>传统题型</span>
+            <span>{{programming:"编程题",single:"单选题",multiple:"多选题",judge:"判断题",objective:"客观题"}[problem.question_type || "programming"]}</span>
           </div>
-          <h2>题目描述</h2>
-          <Markdown>{problem.description}</Markdown>
-          <h2>输入格式</h2>
-          <Markdown>{problem.input_format}</Markdown>
-          <h2>输出格式</h2>
-          <Markdown>{problem.output_format}</Markdown>
-          <div className="sample">
+          {problem.input_format === "已合并到完整题面" ? <Markdown>{problem.description}</Markdown> : <><h2>题目描述</h2><Markdown>{problem.description}</Markdown><h2>输入格式</h2><Markdown>{problem.input_format}</Markdown><h2>输出格式</h2><Markdown>{problem.output_format}</Markdown></>}
+          {problem.input_format !== "已合并到完整题面" && <div className="sample">
             <div>
               <b>输入</b>
               <pre>{problem.sample_input}</pre>
@@ -1372,9 +1738,10 @@ function ProblemPage({
               <b>输出</b>
               <pre>{problem.sample_output}</pre>
             </div>
-          </div>
+          </div>}
         </article>
-        <aside className="submit-panel">
+        <aside className={problem.question_type && problem.question_type!=="programming" ? "submit-panel objective-panel" : "submit-panel"}>
+          {problem.question_type && problem.question_type!=="programming" ? <><div className="editor-head"><b>选择答案</b><span>{problem.question_type==="objective"?`${problem.objective_items?.length||0} 道小题`:problem.question_type==="multiple"?"可多选":"请选择一项"}</span></div>{problem.question_type==="objective"?<div className="objective-answer-list">{(problem.objective_items||[]).map((item,index)=><section key={index}><strong>第 {index+1} 题 · {item.type==="single"?"单选":item.type==="multiple"?"多选":"判断"}</strong>{item.options.map((option,j)=><label key={j}><input type={item.type==="multiple"?"checkbox":"radio"} name={`objective-answer-${index}`} checked={(answer[index]||[]).includes(option)} onChange={e=>{const next=[...answer],current=next[index]||[];next[index]=item.type==="multiple"?(e.target.checked?[...current,option]:current.filter((x:string)=>x!==option)):[option];setAnswer(next)}}/><b>{String.fromCharCode(65+j)}</b><span>{option}</span></label>)}</section>)}</div>:<div className="objective-answer-list">{(problem.objective_options||[]).map((option,index)=><label key={index}><input type={problem.question_type==="multiple"?"checkbox":"radio"} name="objective-answer" checked={answer.includes(option)} onChange={(e)=>setAnswer(problem.question_type==="multiple"?(e.target.checked?[...answer,option]:answer.filter((x)=>x!==option)):[option])}/><b>{String.fromCharCode(65+index)}</b><span>{option}</span></label>)}</div>}<div className="editor-foot"><span>{problem.question_type==="objective"?`已作答 ${answer.filter(x=>x?.length).length}/${problem.objective_items?.length||0}`:`已选择 ${answer.length} 项`}</span><button className="primary" disabled={busy||blocked||!answer.length||(problem.question_type==="objective"&&answer.filter(x=>x?.length).length!==(problem.objective_items?.length||0))} onClick={submit}><Send/>{busy?"提交中...":user?"提交答案":"登录后提交"}</button></div></> : <>
           <div className="editor-head">
             <select
               value={lang}
@@ -1384,26 +1751,27 @@ function ProblemPage({
               <option value="python">Python 3.12</option>
               <option value="java">Java 21</option>
             </select>
-            <span>
-              {lang === "java"
-                ? "Main.java"
-                : lang === "cpp"
-                  ? "Main.cpp"
-                  : "main.py"}
-            </span>
+            <div className="editor-meta"><span>{lang === "java" ? "Main.java" : lang === "cpp" ? "Main.cpp" : "main.py"}</span><select aria-label="编辑器字号" title="编辑器字号" value={editorFontSize} onChange={(e) => changeEditorFontSize(Number(e.target.value))}>{[10,11,12,13,14,15,16,18,20,22,24].map((size) => <option key={size} value={size}>{size}px</option>)}</select></div>
           </div>
-          <textarea
-            spellCheck={false}
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
+          <div className="code-editor" style={{ "--editor-font-size": `${editorFontSize}px` } as React.CSSProperties}>
+            <pre className="code-highlight" aria-hidden="true"><code>{highlightCode(code, lang)}</code></pre>
+            <textarea
+              spellCheck={false}
+              value={code}
+              aria-label="代码编辑器"
+              onChange={(e) => setCode(e.target.value)}
+              onScroll={(e) => { const layer = e.currentTarget.previousElementSibling as HTMLElement | null; if (layer) { layer.scrollTop = e.currentTarget.scrollTop; layer.scrollLeft = e.currentTarget.scrollLeft; } }}
+              onKeyDown={(e) => handleEditorTab(e, code, setCode)}
+            />
+          </div>
           <div className="editor-foot">
             <span>{code.split("\n").length} 行 · UTF-8</span>
-            <button className="primary" disabled={busy} onClick={submit}>
+            <button className="primary" disabled={busy || blocked} onClick={submit}>
               <Send />
-              {busy ? "评测中..." : user ? "提交评测" : "登录后提交"}
+              {blocked ? "已禁止答题" : busy ? "评测中..." : user ? "提交评测" : "登录后提交"}
             </button>
           </div>
+          </>}
           {result && (
             <div
               className={
@@ -1425,6 +1793,7 @@ function ProblemPage({
                       {result.error ||
                         `${result.score || 0} 分 · ${result.time_ms || 0} ms`}
                     </span>
+                    {result.id && <a className="result-link" href={`/records/${result.id}`} onClick={(event) => { event.preventDefault(); history.pushState({}, "", `/records/${result.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}>查看提交记录</a>}
                   </div>
                 </>
               )}
@@ -1472,15 +1841,23 @@ function ContestsPage({
   problems,
   error,
   openProblem,
+  createContest,
 }: {
   user: User | null;
   problems: Problem[];
   error: (s: string) => void;
-  openProblem: (p: Problem) => void;
+  openProblem: (p: Problem, contestId?: number) => void;
+  createContest: () => void;
 }) {
   const [items, setItems] = useState<any[]>([]);
   const [managing, setManaging] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+  const [oilState, setOilState] = useState<any>(null);
+  const [oilProblems, setOilProblems] = useState<any[]>([]);
+  const [oilChat, setOilChat] = useState<any[]>([]);
+  const [oilMessage, setOilMessage] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const inviteToken = new URLSearchParams(location.search).get("team");
   const load = () =>
     api
       .contests()
@@ -1491,6 +1868,58 @@ function ContestsPage({
     const match = location.pathname.match(/^\/contests\/(\d+)$/);
     if (match) void api.contest(Number(match[1])).then(setSelected).catch((e) => error(e.message));
   }, []);
+  async function refreshOil(id: number) {
+    const state = await api.oilState(id);
+    setOilState(state);
+    setOilProblems([]);
+    setOilChat([]);
+    if (state.participant) {
+      const response = await api.oilProblems(id);
+      setOilProblems(response.problems || []);
+    }
+    if (state.participant?.locked) setOilChat(await api.oilChat(id));
+  }
+
+  useEffect(() => {
+    if (selected?.type !== "OIL") {
+      setOilState(null);
+      setOilProblems([]);
+      setOilChat([]);
+      return;
+    }
+    void refreshOil(selected.id).catch(() => {});
+  }, [selected?.id, selected?.type]);
+  useEffect(() => {
+    if (!selected || selected.type !== "OIL" || !inviteToken || !user || oilState?.participant || inviteBusy) return;
+    setInviteBusy(true);
+    api.oilJoinInvite(selected.id, inviteToken)
+      .then(() => { history.replaceState({}, "", `/contests/${selected.id}`); return refreshOil(selected.id); })
+      .catch((e) => error(e.message))
+      .finally(() => setInviteBusy(false));
+  }, [selected?.id, user?.id, oilState?.participant, inviteToken]);
+  async function copyTeamLink() {
+    try {
+      const invite = await api.oilInvite(selected.id);
+      const url = `${location.origin}/contests/${selected.id}?team=${encodeURIComponent(invite.token)}`;
+      await navigator.clipboard.writeText(url);
+      alert(`队伍 ${invite.teamNo} 的组队链接已复制`);
+    } catch (e: any) { error(e.message); }
+  }
+  async function transferCaptain(member: any) {
+    if (!confirm(`确定将队长转让给 ${member.username} 吗？转让后你将失去队伍管理权限。`)) return;
+    try { await api.oilTransferCaptain(selected.id, member.user_id); await refreshOil(selected.id); }
+    catch (e: any) { error(e.message); }
+  }
+  async function kickMember(member: any) {
+    if (!confirm(`确定将 ${member.username} 踢出小队吗？`)) return;
+    try { await api.oilKickMember(selected.id, member.user_id); await refreshOil(selected.id); }
+    catch (e: any) { error(e.message); }
+  }
+  async function disbandTeam() {
+    if (!confirm("确定解散小队吗？所有成员都将退出，现有组队链接也会失效。")) return;
+    try { await api.oilDisbandTeam(selected.id); await refreshOil(selected.id); }
+    catch (e: any) { error(e.message); }
+  }
   async function showContest(id: number) {
     try {
       setSelected(await api.contest(id));
@@ -1509,7 +1938,7 @@ function ContestsPage({
           <h1>比赛</h1>
           <p>与同伴同场竞技，在限时挑战中检验算法能力。</p>
         </div>
-        {user?.role === "admin" && (
+        {(user?.role === "admin" || user?.role === "root") && (
           <button className="plain" onClick={() => setManaging(!managing)}>
             <ShieldCheck />
             {managing ? "返回比赛" : "管理比赛"}
@@ -1522,6 +1951,7 @@ function ContestsPage({
           problems={problems}
           reload={load}
           error={error}
+          createContest={createContest}
         />
       ) : selected ? (
         <div className="contest-detail">
@@ -1531,13 +1961,70 @@ function ContestsPage({
             <div><Clock />{new Date(selected.starts_at).toLocaleString()} · {selected.duration} 分钟</div>
           </div>
           <p>{selected.description || "暂无比赛说明"}</p>
-          <h3>比赛题目</h3>
-          <div className="contest-problems">
+          {selected.type === "OIL" && (
+            <section className="oil-rules">
+              <h3>OIL 赛制</h3>
+              <p>两队对抗，每队 {selected.team_size || 5} 人；做题阶段 {Math.round((selected.solving_duration || 7200) / 60)} 分钟，公开 Hack 阶段 {Math.round((selected.hack_duration || 3600) / 60)} 分钟。</p>
+              <ul>
+                <li>比赛开始时只能看到自己的个人题，团队题隐藏且队内不能交流。</li>
+                <li>锁定个人题后不可修改提交，可与已锁定队友交流，解锁团队题并可 Hack 对手同位置个人题。</li>
+                <li>个人题按子任务独立 Hack，成功后该子任务得分变为 40%，攻击方不得分。</li>
+                <li>公开 Hack 阶段仅可 Hack 团队思维题；需攻破对方全部正确做法，成功后对方失去 70% 分数且攻击方获得等量分数。</li>
+                <li>团队思维题每题 50 分且无部分分；神秘题 200 分，禁止 Hack。</li>
+              </ul>
+            </section>
+          )}
+          {selected.type === "OIL" && oilState && (
+            <section className="oil-runtime">
+              {!oilState.participant ? (
+                oilState.contest.team_mode === "admin" ? <div className="oil-join-actions"><span>本比赛由管理员预设队伍，你尚未被分配，请联系比赛管理员。</span></div> : <div className="oil-join-actions"><button className="primary" disabled={inviteBusy} onClick={() => api.oilJoin(selected.id).then(() => refreshOil(selected.id)).catch((e) => error(e.message))}>{inviteBusy ? "正在加入队伍..." : "创建队伍并加入比赛"}</button>{inviteToken && !user && <span>登录后即可加入邀请队伍</span>}</div>
+              ) : !oilState.participant.locked ? (
+                <>
+                  <b>你已加入比赛，队伍 {oilState.participant.team_no} · 位置 {oilState.participant.seat_no}</b>
+                  <div className="oil-team-panel">
+                    <div className="oil-team-head"><b>小队成员</b>{oilState.contest.team_mode !== "admin" && <button className="plain" onClick={copyTeamLink}><Users />复制组队链接</button>}</div>
+                    {oilState.participants.filter((p: any) => p.team_no === oilState.participant.team_no).map((member: any) => (
+                      <div className="oil-member-row" key={member.user_id}>
+                        <span><b>{member.username}</b>{member.user_id === oilState.captainId && <i>队长</i>}<small>位置 {member.seat_no}{member.locked ? " · 已锁题" : ""}</small></span>
+                        {user?.id === oilState.captainId && member.user_id !== user?.id && <div><button className="text-btn" onClick={() => transferCaptain(member)}>转让队长</button><button className="text-btn danger" onClick={() => kickMember(member)}>踢出小队</button></div>}
+                      </div>
+                    ))}
+                    {user?.id === oilState.captainId && <div className="oil-team-danger"><button className="plain danger" onClick={disbandTeam}><Trash2 />解散小队</button></div>}
+                  </div>
+                  <p>这是你的个人题。锁定后才能查看团队题并进入队内讨论。</p>
+                  <div className="contest-problems">
+                    {oilProblems.length ? oilProblems.map((p) => (
+                      <button key={p.id} onClick={() => { const problem = problems.find((x) => x.id === p.id); if (problem) openProblem(problem, selected.id); else api.problem(p.id).then((item) => openProblem(item, selected.id)).catch((e) => error(e.message)); }}>
+                        <b>{p.isMystery ? "神秘" : p.isTeam ? "团队" : "个人"}</b>
+                        <span>{p.id} {p.title}</span>
+                      </button>
+                    )) : <div className="empty">正在加载个人题...</div>}
+                  </div>
+                  <button className="primary" onClick={() => api.oilLock(selected.id).then(() => refreshOil(selected.id)).catch((e) => error(e.message))}>锁定个人题并解锁团队题</button>
+                </>
+              ) : (
+                <>
+                  <b>你已锁定个人题，队伍 {oilState.participant.team_no} · 位置 {oilState.participant.seat_no}</b>
+                  <div className="contest-problems">
+                    {oilProblems.map((p) => <button className={p.isMystery ? "mystery-problem" : undefined} key={p.id} onClick={() => { const problem = problems.find((x) => x.id === p.id); if (problem) openProblem(problem, selected.id); else api.problem(p.id).then((item) => openProblem(item, selected.id)).catch((e) => error(e.message)); }}><b>{p.isMystery ? "神秘" : p.isTeam ? "团队" : "个人"}</b><span>{p.id} {p.title}</span>{p.isMystery && <small>200 分 · 禁止 Hack</small>}</button>)}
+                  </div>
+                  <div className="oil-chat">
+                    <div className="oil-chat-list">{oilChat.map((m) => <p key={m.id}><b>{m.username}</b>：{m.content}</p>)}</div>
+                    <form onSubmit={(e) => { e.preventDefault(); if (!oilMessage.trim()) return; api.sendOilChat(selected.id, oilMessage).then(() => { setOilMessage(""); return api.oilChat(selected.id); }).then(setOilChat).catch((e) => error(e.message)); }}>
+                      <input value={oilMessage} onChange={(e) => setOilMessage(e.target.value)} placeholder="队内消息" />
+                      <button className="primary">发送</button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+          {selected.type !== "OIL" && <><h3>比赛题目</h3><div className="contest-problems">
             {selected.problems?.length ? selected.problems.map((cp: any, index: number) => {
               const problem = problems.find((p) => p.id === cp.id);
-              return <button key={cp.id} onClick={() => problem && openProblem(problem)}><b>{String.fromCharCode(65 + index)}</b><span>{cp.id} {cp.title}</span></button>;
+              return <button key={cp.id} onClick={() => problem && openProblem(problem, selected.id)}><b>{String.fromCharCode(65 + index)}</b><span>{cp.id} {cp.title}</span></button>;
             }) : <div className="empty">比赛暂未添加题目</div>}
-          </div>
+          </div></>}
         </div>
       ) : (
         <div className="contest-list">
@@ -1576,6 +2063,17 @@ function RecordsPage() {
     </section>
   );
 }
+function SubmissionPage({ id, back }: { id: number; back: () => void }) {
+  const [record, setRecord] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { api.submission(id).then(setRecord).catch(() => setRecord({ error: "记录不存在" })); }, [id]);
+  async function copy() { if (!record?.source) return; await navigator.clipboard?.writeText(record.source); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }
+  const language = record?.language === "python" ? "python" : record?.language === "java" ? "java" : "cpp";
+  if (!record) return <section className="page setup-loading">正在加载提交记录...</section>;
+  if (record.error) return <section className="page"><button className="plain" onClick={back}>返回评测记录</button><div className="empty">{record.error}</div></section>;
+  const tests = Array.isArray(record.detail) ? record.detail : [];
+  return <section className="page submission-page"><div className="page-title"><button className="plain" onClick={back}>返回评测记录</button><span className="kicker">SUBMISSION #{record.id}</span><h1>{record.status}</h1><p>{record.title} · {record.user} · {new Date(record.created_at + "Z").toLocaleString()}</p></div><div className="submission-summary"><span>状态 <b>{record.status}</b></span><span>分数 <b>{record.score ?? 0}</b></span><span>耗时 <b>{record.time_ms ?? "-"} ms</b></span><span>内存 <b>{record.memory_kb ?? "-"} KB</b></span><span>语言 <b>{record.language}</b></span></div>{record.can_view_code ? <><section className="submission-tests"><h2>测试点记录</h2><div className="submission-test-table"><div className="submission-test-row submission-test-head"><span>#</span><span>状态</span><span>得分</span><span>耗时</span><span>内存</span></div>{tests.length ? tests.map((test: any, index: number) => <div className="submission-test-row" key={test.test || index}><span>#{test.test || index + 1}</span><span className={`test-status ${String(test.status || "").toLowerCase().replaceAll(" ", "-")}`}><StatusIcon status={test.status} />{test.status || "-"}</span><span>{test.score ?? (test.status === "Accepted" ? Math.round(100 / tests.length) : 0)}</span><span>{test.time_ms ?? "-"} ms</span><span>{test.memory_kb ?? record.memory_kb ?? "-"} KB</span></div>) : <div className="submission-test-empty">暂无测试点详情</div>}</div></section><section className="submission-code"><div className="submission-code-head"><h2>提交代码</h2><button className="plain" onClick={copy}><Code2 />{copied ? "已复制" : "复制代码"}</button></div><pre><code>{record.source ? highlightCode(record.source, language) : "该提交没有可显示的源码。"}</code></pre></section>{tests.some((test: any) => test.output || test.error || test.checker) && <section className="submission-detail"><h2>错误与检查信息</h2>{tests.filter((test: any) => test.output || test.error || test.checker).map((test: any, index: number) => <div className="submission-test-message" key={index}><b>测试点 #{test.test || index + 1}</b><pre>{test.error || test.checker || test.output}</pre></div>)}</section>}</> : <div className="submission-private"><Code2 /><div><b>提交代码不可见</b><p>只有提交者本人、管理员和 Root 可以查看源码与测试点详情。</p></div></div>}</section>;
+}
 function Recent({ compact = false }: { compact?: boolean }) {
   const [rows, setRows] = useState<Submission[]>([]);
   useEffect(() => {
@@ -1595,7 +2093,7 @@ function Recent({ compact = false }: { compact?: boolean }) {
       <div className="record-list">
         {rows.length ? (
           rows.slice(0, compact ? 4 : 100).map((r) => (
-            <div className="record" key={r.id}>
+            <a className="record" key={r.id} href={`/records/${r.id}`} onClick={(event) => { event.preventDefault(); history.pushState({}, "", `/records/${r.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}>
               <span
                 className={
                   "status " + r.status.replaceAll(" ", "").toLowerCase()
@@ -1623,7 +2121,7 @@ function Recent({ compact = false }: { compact?: boolean }) {
                   <b>{r.score}</b>
                 </>
               )}
-            </div>
+            </a>
           ))
         ) : (
           <div className="empty">还没有提交记录</div>
@@ -1729,7 +2227,7 @@ function DiscussPage({
             返回讨论
           </button>
           <article className="thread-main">
-            {(user?.role === "admin" || user?.id === selected.user_id) && (
+            {((user?.role === "admin" || user?.role === "root") || user?.id === selected.user_id) && (
               <button
                 className="thread-delete"
                 title="删除讨论"
@@ -1816,12 +2314,13 @@ function DiscussPage({
             </label>
             <label className="field">
               <span>内容</span>
-              <textarea
-                required
-                rows={8}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-              />
+<textarea
+  required
+  rows={8}
+  value={content}
+  onChange={(e) => setContent(e.target.value)}
+  onKeyDown={(e) => handleEditorTab(e, content, setContent)}
+/>
             </label>
             <button className="primary">发布讨论</button>
           </form>
