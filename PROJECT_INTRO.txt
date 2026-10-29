@@ -1,0 +1,7 @@
+InfiniteJudge 是 BrightWeb Dev Team 开发的跨平台在线评测与训练平台，面向学校、社团和个人学习者。无需Docker，装好Node.js 22+和编译器即可在macOS、Windows、Linux运行。
+
+功能：支持C++20、Python、Java评测及Special Judge；题库含编程题和客观题；比赛支持ACM、OI、IOI、OIL赛制，含团队题和Hack；另有训练作业、讨论博客、私信朋友圈、管理域和RP排行榜。登录支持Passkey和Auth0，并提供Hydro风格插件层。
+
+技术：React+TypeScript前端，Express 4后端，Node内置SQLite，按系统自动选择评测沙箱，支持分布式评测。内置AI助手，可选AI作弊检测：题面零宽指纹追溯来源，代码相似度评分自动判零。
+
+部署：npm run dev、./deploy.sh或docker compose up，数据存于data/。许可要求保留页脚Powered by ©2025-2026 BrightWeb Dev Team。

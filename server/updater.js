@@ -87,7 +87,7 @@ export async function installUpdate({ archive, filename, root, expectedVersion, 
       cpSync(resolve(source, name), resolve(root, name), { recursive: true, force: true });
     }
     logs.push(`${origin}更新包 ${manifest.version} 已校验并安装`, `SHA-256: ${digest}`);
-    for (const [command, args] of [["npm", ["install", "--no-audit", "--no-fund"]], ["npm", ["run", "build"]]]) {
+    for (const [command, args] of [["npm", ["install", "--include=dev", "--no-audit", "--no-fund"]], ["npm", ["run", "build"]]]) {
       const result = await run(command, args, root);
       logs.push(`$ ${command} ${args.join(" ")}\n${result.out}`);
       if (result.code) throw Object.assign(new Error("更新文件已安装，但依赖安装或构建失败"), { logs });

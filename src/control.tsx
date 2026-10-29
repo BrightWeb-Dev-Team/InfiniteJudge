@@ -7,13 +7,20 @@ import {
   ShieldCheck,
   Upload,
   Users,
+  KeyRound,
+  RefreshCw,
+  AlertTriangle,
+  Ban,
+  CheckCircle,
+  XCircle,
+  Eye,
 } from "lucide-react";
 import { api, Problem, SiteConfig, User } from "./api";
 import { AdminPage } from "./admin";
 import { SettingsPage } from "./settings";
 
 type View =
-  "dashboard" | "scripts" | "import" | "users" | "content" | "settings";
+  "dashboard" | "scripts" | "import" | "users" | "content" | "settings" | "license" | "reports";
 export function ControlPanel({
   user,
   problems,
@@ -53,7 +60,8 @@ export function ControlPanel({
     ["dashboard", "控制面板", Activity],
     ["scripts", "脚本管理", Play],
     ["import", "导入用户", Upload],
-    ...(user.role === "root" ? [["users", "用户权限", Users], ["settings", "配置管理", Settings2]] as Array<[View, string, any]> : []),
+    ...(user.role === "root" ? [["users", "用户权限", Users], ["reports", "危险代码", AlertTriangle], ["settings", "配置管理", Settings2], ["license", "授权管理", KeyRound]] as Array<[View, string, any]> : []),
+    ...(user.role === "admin" ? [["reports", "危险代码", AlertTriangle]] as Array<[View, string, any]> : []),
   ];
   return (
     <section className="page control-layout">
@@ -220,41 +228,94 @@ export function ControlPanel({
                   <th>UID</th>
                   <th>用户名</th>
                   <th>角色</th>
+                  <th>状态</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
-                  <tr>
-                    <td>{u.id}</td>
-                    <td>{u.username}</td>
-                    <td>{u.role}</td>
-                    <td>
-                      <select
-                        value={u.role}
-                        onChange={async (e) => {
-                          try {
-                            await api.updateUserRole(u.id, e.target.value);
-                            loadUsers();
-                          } catch (err: any) {
-                            error(err.message);
-                          }
-                        }}
-                      >
-                        <option value="user">普通用户</option>
-                        <option value="admin">管理员</option>
-                        <option value="root">Root</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
+                {users.map((u) => {
+                  const isBanned = u.banned_until > Date.now();
+                  return (
+                    <tr key={u.id} className={isBanned ? "banned-row" : ""}>
+                      <td>{u.id}</td>
+                      <td>{u.username}</td>
+                      <td>{u.role}</td>
+                      <td>
+                        {isBanned ? (
+                          <span className="ban-badge" title={u.ban_reason || "已封禁"}>
+                            <Ban size={14} />
+                            {u.banned_until > 0 && u.banned_until < Infinity
+                              ? `封禁至 ${new Date(u.banned_until).toLocaleString()}`
+                              : "永久封禁"}
+                          </span>
+                        ) : (
+                          <span className="active-badge">正常</span>
+                        )}
+                      </td>
+                      <td className="user-actions">
+                        <select
+                          value={u.role}
+                          onChange={async (e) => {
+                            try {
+                              await api.updateUserRole(u.id, e.target.value);
+                              loadUsers();
+                            } catch (err: any) {
+                              error(err.message);
+                            }
+                          }}
+                        >
+                          <option value="user">普通用户</option>
+                          <option value="admin">管理员</option>
+                          <option value="root">Root</option>
+                        </select>
+                        {isBanned ? (
+                          <button
+                            className="text-btn unban-btn"
+                            onClick={async () => {
+                              if (!confirm(`确定解封用户 ${u.username}？`)) return;
+                              try {
+                                await api.unbanUser(u.id);
+                                loadUsers();
+                              } catch (err: any) {
+                                error(err.message);
+                              }
+                            }}
+                          >
+                            <CheckCircle size={14} /> 解封
+                          </button>
+                        ) : (
+                          <button
+                            className="text-btn ban-btn"
+                            onClick={async () => {
+                              const reason = prompt(`封禁用户 ${u.username}，请输入原因：`);
+                              if (reason === null) return;
+                              const duration = prompt("封禁时长（小时，0 为永久）：", "24");
+                              if (duration === null) return;
+                              const hours = Number(duration) || 0;
+                              try {
+                                await api.banUser(u.id, hours * 3600 * 1000, reason);
+                                loadUsers();
+                              } catch (err: any) {
+                                error(err.message);
+                              }
+                            }}
+                          >
+                            <Ban size={14} /> 封禁
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </section>
         )}
+        {view === "reports" && <CodeReportsView error={error} userRole={user.role} />}
         {view === "settings" && (
           <SettingsPage error={error} changed={changed} />
         )}
+        {view === "license" && <LicenseSettings error={error} />}
       </div>
       <aside className="control-nav">
         <div className="control-nav-title">
@@ -273,5 +334,302 @@ export function ControlPanel({
         ))}
       </aside>
     </section>
+  );
+}
+
+function LicenseSettings({ error }: { error: (message: string) => void }) {
+  const [form, setForm] = useState({ serverUrl: "https://key.brightweb.top", key: "" });
+  const [status, setStatus] = useState<{ keyConfigured: boolean; keyMasked: string; tier: "community" | "professional" } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => { try { const value = await api.licenseSettings(); setForm((current) => ({ ...current, serverUrl: value.serverUrl })); setStatus(value); } catch (cause: any) { error(cause.message); } };
+  useEffect(() => { void load(); }, []);
+  const save = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await api.updateLicenseSettings({ serverUrl: form.serverUrl, key: form.key || undefined }); setForm((current) => ({ ...current, key: "" })); await load(); error("授权配置已保存"); } catch (cause: any) { error(cause.message); } finally { setBusy(false); } };
+  const clear = async () => { if (!confirm("清除本站 Professional 授权？")) return; setBusy(true); try { await api.updateLicenseSettings({ serverUrl: form.serverUrl, clearKey: true }); await load(); error("授权 key 已清除"); } catch (cause: any) { error(cause.message); } finally { setBusy(false); } };
+  return <section className="control-card license-settings-card"><div className="license-settings-heading"><div><span className="kicker">LICENSE</span><h1>授权管理</h1><p>配置本站连接的官方授权平台和 License Key。Key 只保存在服务端，不会回显完整内容。</p></div><KeyRound /></div><div className={`license-tier-badge ${status?.tier === "professional" ? "professional" : "community"}`}><span>{status?.tier === "professional" ? "Professional" : "Community"}</span><small>{status?.keyConfigured ? `当前授权：${status.keyMasked}` : "未配置授权 key，使用 Community"}</small></div><form className="license-settings-form" onSubmit={save}><label className="field"><span>授权服务地址</span><input type="url" required value={form.serverUrl} onChange={(event) => setForm({ ...form, serverUrl: event.target.value })} placeholder="https://key.brightweb.top" /><small>官方地址：<code>https://key.brightweb.top</code></small></label><label className="field"><span>{status?.keyConfigured ? "替换 License Key" : "License Key"}</span><input type="password" value={form.key} onChange={(event) => setForm({ ...form, key: event.target.value })} placeholder={status?.keyConfigured ? "留空以保持当前 key" : "IJ-XXXXX-XXXXX-..."} autoComplete="new-password" /></label><div className="license-actions"><button className="primary" disabled={busy}><KeyRound />{busy ? "保存中..." : "保存并验证"}</button>{status?.keyConfigured && <button type="button" className="plain" disabled={busy} onClick={clear}><RefreshCw />清除授权</button>}</div></form></section>;
+}
+
+function CodeReportsView({ error, userRole }: { error: (message: string) => void; userRole: string }) {
+  const [status, setStatus] = useState("pending");
+  const [reports, setReports] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  const load = () =>
+    api
+      .codeReports(status, 100, 0)
+      .then((data) => {
+        setReports(data.reports);
+        setTotal(data.total);
+      })
+      .catch((e) => error(e.message));
+
+  useEffect(() => {
+    void load();
+  }, [status]);
+
+  const handleReview = async (id: number, newStatus: string) => {
+    const note = newStatus === "dismissed" ? prompt("备注（可选）：") || "" : "";
+    try {
+      await api.updateCodeReport(id, newStatus, note);
+      load();
+    } catch (e: any) {
+      error(e.message);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("确定删除此报告？")) return;
+    try {
+      await api.deleteCodeReport(id);
+      load();
+    } catch (e: any) {
+      error(e.message);
+    }
+  };
+
+  const severityLabel: Record<string, string> = { high: "高", medium: "中", low: "低" };
+  const severityClass: Record<string, string> = { high: "severity-high", medium: "severity-medium", low: "severity-low" };
+
+  return (
+    <section className="control-card">
+      <h1>
+        <AlertTriangle size={20} style={{ verticalAlign: "middle", marginRight: 8 }} />
+        危险代码上报
+        <span className="muted" style={{ marginLeft: 12, fontSize: 14 }}>
+          共 {total} 条
+        </span>
+      </h1>
+      <div className="report-filters">
+        {["pending", "reviewed", "dismissed"].map((s) => (
+          <button
+            key={s}
+            className={status === s ? "active" : ""}
+            onClick={() => setStatus(s)}
+          >
+            {s === "pending" ? "待审核" : s === "reviewed" ? "已审核" : "已忽略"}
+          </button>
+        ))}
+      </div>
+      {reports.length === 0 ? (
+        <p className="muted" style={{ padding: "20px 0", textAlign: "center" }}>
+          暂无{status === "pending" ? "待审核" : status === "reviewed" ? "已审核" : "已忽略"}的危险代码报告
+        </p>
+      ) : (
+        <div className="report-list">
+          {reports.map((r) => (
+            <div key={r.id} className={`report-item ${r.status}`}>
+              <div
+                className="report-header"
+                onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+              >
+                <div className="report-info">
+                  <span className="report-user">{r.username}</span>
+                  <span className="report-problem">{r.problem_title || r.problem_id}</span>
+                  <span className="report-lang">{r.language}</span>
+                  <span className="report-time">
+                    {new Date(r.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <div className="report-matches-summary">
+                  {r.matches.slice(0, 3).map((m: any, i: number) => (
+                    <span key={i} className={`severity-tag ${severityClass[m.severity]}`}>
+                      {m.label}
+                    </span>
+                  ))}
+                  {r.matches.length > 3 && (
+                    <span className="severity-tag">+{r.matches.length - 3}</span>
+                  )}
+                </div>
+                <Eye size={16} className={`report-expand-icon ${expanded === r.id ? "expanded" : ""}`} />
+              </div>
+              {expanded === r.id && (
+                <div className="report-detail">
+                  <div className="report-all-matches">
+                    <h4>检测到的危险模式：</h4>
+                    {r.matches.map((m: any, i: number) => (
+                      <div key={i} className="match-item">
+                        <span className={`severity-tag ${severityClass[m.severity]}`}>
+                          {severityLabel[m.severity]}
+                        </span>
+                        <span>{m.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {r.source && (
+                    <div className="report-source">
+                      <h4>代码片段：</h4>
+                      <pre><code>{r.source.slice(0, 2000)}</code></pre>
+                    </div>
+                  )}
+                  {r.review_note && (
+                    <div className="report-note">
+                      <h4>审核备注：</h4>
+                      <p>{r.review_note}</p>
+                    </div>
+                  )}
+                  <div className="report-actions">
+                    {r.status === "pending" && (
+                      <>
+                        <button
+                          className="primary"
+                          onClick={() => handleReview(r.id, "reviewed")}
+                        >
+                          <CheckCircle size={14} /> 标记已审核
+                        </button>
+                        <button
+                          className="plain"
+                          onClick={() => handleReview(r.id, "dismissed")}
+                        >
+                          <XCircle size={14} /> 忽略
+                        </button>
+                      </>
+                    )}
+                    {r.status !== "pending" && (
+                      <button
+                        className="plain"
+                        onClick={() => handleReview(r.id, "pending")}
+                      >
+                        <RefreshCw size={14} /> 重新打开
+                      </button>
+                    )}
+                    <button
+                      className="text-btn danger"
+                      onClick={() => handleDelete(r.id)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function BanManager({ user, onClose, error }: { user: User; onClose: () => void; error: (message: string) => void }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const loadUsers = () =>
+    api
+      .adminUsers()
+      .then(setUsers)
+      .catch((e) => error(e.message));
+
+  useEffect(() => {
+    void loadUsers();
+  }, []);
+
+  const handleBan = async (target: any) => {
+    const reason = prompt(`封禁用户 ${target.username}，请输入原因：`);
+    if (reason === null) return;
+    const duration = prompt("封禁时长（小时，0 为永久）：", "24");
+    if (duration === null) return;
+    const hours = Number(duration) || 0;
+    setBusy(true);
+    try {
+      await api.banUser(target.id, hours * 3600 * 1000, reason);
+      loadUsers();
+    } catch (e: any) {
+      error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnban = async (target: any) => {
+    if (!confirm(`确定解封用户 ${target.username}？`)) return;
+    setBusy(true);
+    try {
+      await api.unbanUser(target.id);
+      loadUsers();
+    } catch (e: any) {
+      error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="ban-manager-modal">
+        <button className="modal-close" onClick={onClose}>
+          <XCircle />
+        </button>
+        <h2>
+          <Ban size={20} style={{ verticalAlign: "middle", marginRight: 8 }} />
+          封禁管理
+        </h2>
+        <p className="muted">管理用户封禁状态，封禁后用户所有设备将被强制退出登录。</p>
+        <div className="ban-user-list">
+          {users.length === 0 ? (
+            <p className="muted" style={{ textAlign: "center", padding: "20px 0" }}>
+              加载中...
+            </p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>UID</th>
+                  <th>用户名</th>
+                  <th>角色</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const isBanned = u.banned_until > Date.now();
+                  const isRoot = u.role === "root";
+                  return (
+                    <tr key={u.id} className={isBanned ? "banned-row" : ""}>
+                      <td>{u.id}</td>
+                      <td>{u.username}</td>
+                      <td>{u.role}</td>
+                      <td>
+                        {isBanned ? (
+                          <span className="ban-badge" title={u.ban_reason || "已封禁"}>
+                            <Ban size={14} />
+                            {u.banned_until > 0
+                              ? `封禁至 ${new Date(u.banned_until).toLocaleString()}`
+                              : "永久封禁"}
+                          </span>
+                        ) : (
+                          <span className="active-badge">正常</span>
+                        )}
+                      </td>
+                      <td className="user-actions">
+                        {isRoot ? (
+                          <span className="muted" style={{ fontSize: ".8rem" }}>Root 不可操作</span>
+                        ) : isBanned ? (
+                          <button
+                            className="text-btn unban-btn"
+                            disabled={busy}
+                            onClick={() => handleUnban(u)}
+                          >
+                            <CheckCircle size={14} /> 解封
+                          </button>
+                        ) : (
+                          <button
+                            className="text-btn ban-btn"
+                            disabled={busy}
+                            onClick={() => handleBan(u)}
+                          >
+                            <Ban size={14} /> 封禁
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

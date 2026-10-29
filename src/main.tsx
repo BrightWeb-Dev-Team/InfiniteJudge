@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Clock,
   Code2,
+  EyeOff,
   Database,
   Command,
   Flame,
@@ -33,16 +34,25 @@ import {
   SlidersHorizontal,
   Trash2,
   UserCircle,
+  UserRoundCog,
   Mail,
   Wrench,
   NotebookText,
   FolderOpen,
   Upload,
   KeyRound,
+  Edit3,
+  Save,
+  Heart,
+  Video,
+  Ban,
 } from "lucide-react";
 import {
   api,
   CountdownConfig,
+  IntegrityRun,
+  IntegritySession,
+  MyPermissions,
   Problem,
   SiteConfig,
   Submission,
@@ -50,19 +60,26 @@ import {
 } from "./api";
 import { AdminPage, emptyProblem } from "./admin";
 import { ObjectiveItemsEditor } from "./objective-editor";
-import { ControlPanel } from "./control";
+import { ControlPanel, BanManager } from "./control";
 import { DomainsPage } from "./domains";
 import { AccountPage, BlogPage, FilesPage, MessagesPage, ProfilePage } from "./account";
+import { MomentsPage } from "./moments";
+import { Mascot } from "./mascot";
 import { Markdown as RichMarkdown } from "./markdown";
 import { handleEditorTab } from "./editor";
-import { VideoCall } from "./video-call";
+import { VideoCall, CALL_ENDED, startCall } from "./video-call";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { WheelDateTime } from "./datetime";
+import { useUserLookup, UserLookupPreview } from "./user-lookup";
+import "./liquid-glass.css";
+import { LiquidGlassEffects } from "./liquid-glass";
+import { AiAssistantPage } from "./ai-assistant";
+import { startChatApp } from "./chat";
 
 const oauthHash = new URLSearchParams(location.hash.replace(/^#/, ""));
-const oauthToken = oauthHash.get("oauth_token");
-if (oauthToken) {
-  localStorage.setItem("ij-token", oauthToken);
+const oauthCode = oauthHash.get("oauth_code");
+let oauthError = oauthHash.get("oauth_error");
+if (oauthHash.has("oauth_code") || oauthHash.has("oauth_token") || oauthHash.has("oauth_error")) {
   history.replaceState(null, "", location.pathname + location.search);
 }
 type Page =
@@ -88,11 +105,15 @@ type Page =
   | "account"
   | "messages"
   | "blog"
+  | "moments"
   | "files"
   | "profile"
   | "video-call"
   | "certifications"
-  | "certification-guide";
+  | "certification-create"
+  | "certification-guide"
+  | "customize"
+  | "ai-assistant";
 
 type Theme = "light" | "dark" | "meteor" | "miku";
 
@@ -114,6 +135,7 @@ const pagePaths: Record<Exclude<Page, "problem" | "profile">, string> = {
   records: "/records",
   discuss: "/discussions",
   certifications: "/certifications",
+  "certification-create": "/certifications/create",
   "certification-guide": "/certifications/guide",
   settings: "/settings",
   queue: "/queue",
@@ -125,11 +147,15 @@ const pagePaths: Record<Exclude<Page, "problem" | "profile">, string> = {
   account: "/account",
   messages: "/messages",
   blog: "/blog",
+  moments: "/moments",
   files: "/files",
   "video-call": "/video-call",
+  customize: "/customize",
+  "ai-assistant": "/ai-assistant",
 };
 function routeFromPath(): { page: Page; id?: string } {
   const path = location.pathname.replace(/\/$/, "") || "/";
+  if (path === "/assistant") return { page: "ai-assistant" };
   if (["/license", "/about/license"].includes(path.toLowerCase())) return { page: "license" };
   if (path === "/problems/create") return { page: "problem-create" };
   if (path === "/contest/create") return { page: "contest-create" };
@@ -145,7 +171,9 @@ function routeFromPath(): { page: Page; id?: string } {
   if (videoCall) return { page: "video-call", id: videoCall[1] };
   if (/^\/contests\/\d+$/.test(path)) return { page: "contests" };
   if (/^\/discussions\/\d+$/.test(path)) return { page: "discuss" };
-  if (/^\/blog(?:\/create|\/\d+(?:\/edit)?)$/.test(path)) return { page: "blog" };
+  // Canonical blog URL is /blog/<uid>/<post id>; the bare /blog/<id> form
+  // stays routable so older shared links still land on the post.
+  if (/^\/blog(?:\/create|\/\d+(?:\/\d+|\/edit)?)$/.test(path)) return { page: "blog" };
   return {
     page:
       (
@@ -159,6 +187,7 @@ function routeFromPath(): { page: Page; id?: string } {
           "/records": "records",
           "/discussions": "discuss",
           "/certifications": "certifications",
+          "/certifications/create": "certification-create",
           "/certifications/guide": "certification-guide",
           "/settings": "settings",
           "/queue": "queue",
@@ -169,8 +198,11 @@ function routeFromPath(): { page: Page; id?: string } {
           "/account": "account",
           "/messages": "messages",
           "/blog": "blog",
+          "/moments": "moments",
           "/files": "files",
           "/video-call": "video-call",
+          "/customize": "customize",
+          "/ai-assistant": "ai-assistant",
         } as any
       )[path] || "home",
   };
@@ -266,6 +298,7 @@ function ProblemCreatePage({
             </CreateField>
             <label className="check-row"><input type="checkbox" checked={!!form.hidden} onChange={(e) => field("hidden", e.target.checked ? 1 : 0)} />隐藏题目（仅管理员和 Root 可见）</label>
             <CreateField label="题型"><select value={form.question_type||"programming"} onChange={(e)=>setForm({...form,question_type:e.target.value,objective_items:e.target.value==="objective"&&!(form.objective_items||[]).length?[{type:"single",options:["选项 A","选项 B"],answer:[]}]:form.objective_items})}><option value="programming">编程题</option><option value="objective">客观题（可混合）</option></select></CreateField>
+            <label className="check-row"><input type="checkbox" checked={!!form.integrity_enabled} disabled={form.question_type === "objective"} onChange={(e) => field("integrity_enabled", e.target.checked ? 1 : 0)} />AI 作弊检测（代码输出、粘贴监控、水印、Computer Use 防护）</label>
           </div>
         </div>
         <div className="create-editor-grid">
@@ -434,7 +467,29 @@ function App() {
   const [setup, setSetup] = useState<boolean | null>(null),
     [page, setPage] = useState<Page>(initialRoute.page),
     [theme, setTheme] = useState<Theme>(getInitialTheme),
+    [liquidGlass, setLiquidGlass] = useState(() => {
+      try { return localStorage.getItem("ij-liquid-glass") === "1"; }
+      catch { return false; }
+    }),
+    [glassTransparency, setGlassTransparency] = useState(() => {
+      try {
+        const saved = localStorage.getItem("ij-glass-transparency");
+        const value = saved === null ? 84 : Number(saved);
+        return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 84;
+      } catch { return 84; }
+    }),
+    [glassRefraction, setGlassRefraction] = useState(() => {
+      try {
+        const saved = localStorage.getItem("ij-glass-refraction");
+        const value = saved === null ? 70 : Number(saved);
+        return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 70;
+      } catch { return 70; }
+    }),
     [mobile, setMobile] = useState(false),
+    [mascot, setMascot] = useState(() => {
+      try { return localStorage.getItem("ij-mascot") === "1"; }
+      catch { return false; }
+    }),
     [compatibility, setCompatibility] = useState(() => localStorage.getItem("ij-compatibility-mode") === "1"),
     [problems, setProblems] = useState<Problem[]>([]),
     [selected, setSelected] = useState<Problem | null>(null),
@@ -445,10 +500,14 @@ function App() {
     [user, setUser] = useState<User | null>(null),
     [authOpen, setAuthOpen] = useState(false),
     [userMenu, setUserMenu] = useState(false),
+    [switchUserOpen, setSwitchUserOpen] = useState(false),
     [tagManagerOpen, setTagManagerOpen] = useState(false),
+    [banManagerOpen, setBanManagerOpen] = useState(false),
     [unread, setUnread] = useState(0),
+    [friendRequests, setFriendRequests] = useState(0),
     [domains, setDomains] = useState<any[]>([]),
     [domainId, setDomainId] = useState(() => localStorage.getItem("ij-domain-id") || ""),
+    [perms, setPerms] = useState<MyPermissions | null>(null),
     [adminVerifyOpen, setAdminVerifyOpen] = useState(false),
     [adminTarget, setAdminTarget] = useState<"settings" | "domains">(
       initialRoute.page === "domains" ? "domains" : "settings",
@@ -457,8 +516,8 @@ function App() {
       Number(sessionStorage.getItem("ij-admin-verification-expires")) >
         Date.now(),
     ),
-    [communityVersion] = useState("2.4.5"),
-    [error, setError] = useState(""),
+    [communityVersion] = useState("5.0.0"),
+    [error, setError] = useState(oauthError ? `Auth0 统一登录失败：${oauthError}` : ""),
     [announcementOpen, setAnnouncementOpen] = useState(false),
     [announcementDismiss, setAnnouncementDismiss] = useState(false),
     [site, setSite] = useState<SiteConfig>({
@@ -489,11 +548,13 @@ function App() {
         if (v.announcementPopup && domainAnnouncement && now >= start && now <= end && localStorage.getItem("ij-dismissed-announcement") !== noticeId) setAnnouncementOpen(true);
       })
       .catch(() => {});
-    if (initialRoute.page === "problem" && initialRoute.id)
-      api
-        .problem(initialRoute.id)
+    if (initialRoute.page === "problem" && initialRoute.id) {
+      const contestId = Number(new URLSearchParams(location.search).get("contest") || 0) || undefined;
+      setSelectedContestId(contestId);
+      (contestId ? api.contestProblem(contestId, initialRoute.id) : api.problem(initialRoute.id))
         .then(setSelected)
         .catch((e) => setError(e.message));
+    }
     if (localStorage.getItem("ij-token"))
       api
         .me()
@@ -524,13 +585,16 @@ function App() {
       setPage(route.page);
       setUserMenu(false);
       if (route.page === "problem-tests") setTestProblemId(route.id || "");
+      if (route.page === "settings" && !(Number(sessionStorage.getItem("ij-admin-verification-expires")) > Date.now())) { setAdminTarget("settings"); setAdminVerifyOpen(true); }
       if ((route.page === "profile" || route.page === "video-call") && route.id) setProfileId(Number(route.id));
       if (route.page === "records") setRecordId(route.id ? Number(route.id) : null);
-      if (route.page === "problem" && route.id)
-        api
-          .problem(route.id)
+      if (route.page === "problem" && route.id) {
+        const contestId = Number(new URLSearchParams(location.search).get("contest") || 0) || undefined;
+        setSelectedContestId(contestId);
+        (contestId ? api.contestProblem(contestId, route.id) : api.problem(route.id))
           .then(setSelected)
           .catch((e) => setError(e.message));
+      } else setSelectedContestId(undefined);
     };
     addEventListener("popstate", handler);
     return () => removeEventListener("popstate", handler);
@@ -545,11 +609,44 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
   useEffect(() => {
+    document.documentElement.toggleAttribute("data-liquid-glass", liquidGlass);
+    try { localStorage.setItem("ij-liquid-glass", liquidGlass ? "1" : "0"); }
+    catch { /* Keep the preference usable when browser storage is unavailable. */ }
+  }, [liquidGlass]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--glass-opacity", String((100 - glassTransparency) / 100));
+    try { localStorage.setItem("ij-glass-transparency", String(glassTransparency)); }
+    catch { /* The current session can still adjust the material. */ }
+  }, [glassTransparency]);
+  useEffect(() => {
+    try { localStorage.setItem("ij-glass-refraction", String(glassRefraction)); }
+    catch { /* The current session can still adjust refraction. */ }
+  }, [glassRefraction]);
+  useEffect(() => {
+    try { localStorage.setItem("ij-mascot", mascot ? "1" : "0"); }
+    catch { /* The preference falls back to off when storage is unavailable. */ }
+  }, [mascot]);
+  // custom_head / custom_script would run in this origin and could read ij-token from
+  // localStorage, so they are only rendered inside the sandboxed CustomHtml frame.
+
+  useEffect(() => {
     if (!user) return setUnread(0);
     api.messages()
       .then((items) => setUnread(items.filter((item) => item.recipient_id === user.id && !item.read_at).length))
       .catch(() => {});
   }, [user, page]);
+  useEffect(() => {
+    if (!user) return setFriendRequests(0);
+    api.friends().then((data) => setFriendRequests(data.incoming.length)).catch(() => {});
+  }, [user, page]);
+  // Domain permissions drive every navigation entry; the server enforces the same keys.
+  useEffect(() => {
+    if (!user) { setPerms(null); return; }
+    let alive = true;
+    api.myPermissions().then((value) => { if (alive) setPerms(value); }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.id, domainId, page]);
+  const can = (permission: string) => Boolean(perms?.is_root || perms?.permissions?.[permission]);
   useEffect(()=>{if(!user)return setDomains([]);api.domains().then((items)=>{setDomains(items);if(!domainId&&items[0]){localStorage.setItem("ij-domain-id",String(items[0].id));setDomainId(String(items[0].id));}}).catch(()=>{});},[user]);
   useEffect(()=>{if(domainId)load();},[domainId]);
   useEffect(() => {
@@ -563,6 +660,11 @@ function App() {
       setAdminVerified(false);
       setAdminTarget("settings");
       setAdminVerifyOpen(true);
+      // The route URL is still /settings; without this the in-app history would point at a
+      // page the app refuses to render once the modal is dismissed.
+      if (page !== "settings") return;
+      history.replaceState({}, "", pagePaths.home);
+      setPage("home");
       return;
     }
     const timer = window.setTimeout(() => {
@@ -571,9 +673,21 @@ function App() {
       setAdminVerified(false);
       setAdminTarget("settings");
       setAdminVerifyOpen(true);
+      history.replaceState({}, "", pagePaths.home);
+      setPage("home");
     }, delay);
     return () => clearTimeout(timer);
   }, [page, user, adminVerified]);
+  // Any elevated request rejected with ADMIN_REVERIFY (server restart, expiry) surfaces here.
+  useEffect(() => {
+    const handler = () => {
+      setAdminVerified(false);
+      setAdminTarget("settings");
+      setAdminVerifyOpen(true);
+    };
+    addEventListener("ij-admin-reverify", handler);
+    return () => removeEventListener("ij-admin-reverify", handler);
+  }, []);
   const go = async (p: Exclude<Page, "problem" | "profile">) => {
     if (p === "problem-tests") return;
     if (p === "settings" && user?.role !== "root") { setError("普通管理员无权访问控制面板"); return; }
@@ -616,9 +730,9 @@ function App() {
   };
   const open = async (p: Problem, contestId?: number) => {
     try {
-      setSelected(await api.problem(p.id));
+      setSelected(contestId ? await api.contestProblem(contestId, p.id) : await api.problem(p.id));
       setSelectedContestId(contestId);
-      history.pushState({}, "", `/problems/${encodeURIComponent(p.id)}`);
+      history.pushState({}, "", `/problems/${encodeURIComponent(p.id)}${contestId ? `?contest=${contestId}` : ""}`);
       setPage("problem");
       setMobile(false);
       scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -651,7 +765,9 @@ function App() {
   return (
     <>
       {theme === "meteor" && !compatibility && !isSafari && <MeteorShower />}
-      <header>
+      <LiquidGlassEffects enabled={liquidGlass && !compatibility} theme={theme} strength={glassRefraction} />
+      <Mascot enabled={mascot} />
+      <header className="site-header">
         <button className="brand" onClick={() => go("home")}>
           <span className="brand-mark">
             {site.logo ? <img src={site.logo} alt="" /> : <Command />}
@@ -669,13 +785,13 @@ function App() {
               {label}
             </button>
           ))}
-          {isAdmin && (
+          {(isAdmin || can("edit_domain") || can("manage_permission") || can("join_application")) && (
             <button
               className={page === "domains" ? "active" : ""}
               onClick={() => go("domains")}
             >
               <Users />
-              管理域
+              域管理
             </button>
           )}
           {user?.role === "root" && (
@@ -685,6 +801,12 @@ function App() {
             >
               <SlidersHorizontal />
               控制面板
+            </button>
+          )}
+          {!user && (
+            <button className="nav-login" onClick={() => { setAuthOpen(true); setMobile(false); }}>
+              <LogIn />
+              登录
             </button>
           )}
         </nav>
@@ -704,13 +826,18 @@ function App() {
               {userMenu && <div className="user-dropdown">
                 <button onClick={() => openProfile(user.id)}><UserCircle />我的资料</button>
                 <button onClick={() => { go("messages"); setUserMenu(false); }}><Mail />站内消息{unread > 0 && <b>{unread}</b>}</button>
+                <button onClick={() => { go("moments"); setUserMenu(false); }}><Heart />朋友圈{friendRequests > 0 && <b>{friendRequests}</b>}</button>
                 <div className="dropdown-separator" />
                 <button onClick={() => { go("domains"); setUserMenu(false); }}><Database />我的域</button>
                 <button onClick={() => { go("files"); setUserMenu(false); }}><FolderOpen />我的文件</button>
                 <button onClick={() => { go("account"); setUserMenu(false); }}><Wrench />账户设置</button>
+                <button onClick={() => { go("ai-assistant"); setUserMenu(false); }}><Sparkles />AI 助手</button>
+                <button onClick={() => { go("customize"); setUserMenu(false); }}><Edit3 />自定义页面</button>
                 <button onClick={() => { go("blog"); setUserMenu(false); }}><NotebookText />博客</button>
-                {isAdmin && <button onClick={() => { setTagManagerOpen(true); setUserMenu(false); }}><SlidersHorizontal />Tag 管理</button>}
+                {can("view_tag") && <button onClick={() => { setTagManagerOpen(true); setUserMenu(false); }}><SlidersHorizontal />Tag 管理</button>}
                 <button onClick={() => { go("certifications"); setUserMenu(false); }}><ShieldCheck />认证中心</button>
+                {user.role === "root" && <button onClick={() => { setBanManagerOpen(true); setUserMenu(false); }}><Ban />封禁管理</button>}
+                {user.role === "root" && <button onClick={() => { setSwitchUserOpen(true); setUserMenu(false); }}><UserRoundCog />切换用户</button>}
                 <div className="dropdown-separator" />
                 <button onClick={logout}><LogOut />登出</button>
               </div>}
@@ -738,9 +865,11 @@ function App() {
             problems={problems}
             announcement={site.homeAnnouncement || site.announcement}
             carousel={site.carousel}
+            carouselInterval={site.carouselInterval}
             user={user}
             go={go}
             open={open}
+            openProfile={openProfile}
             error={setError}
           />
         )}{" "}
@@ -803,7 +932,10 @@ function App() {
           <LearningPage kind="homework" user={user} problems={problems} openProblem={open} error={setError} />
         )}{" "}
         {page === "ranking" && <RankingPage openProfile={openProfile} />}{" "}
-        {page === "certifications" && user && <CertificationPage user={user} error={setError} />}{" "}
+        {page === "certifications" && user && <CertificationPage user={user} error={setError} go={go} />}{" "}
+        {page === "certification-create" && (user && isAdmin
+          ? <CertificationPage key="issue-certification" user={user} error={setError} go={go} issuing />
+          : <section className="page"><h1>发起认证</h1><p>{user ? "需要管理员权限" : "请先登录"}</p><button className="plain" onClick={() => user ? go("home") : setAuthOpen(true)}>{user ? "返回首页" : "登录"}</button></section>)}{" "}
         {page === "certification-guide" && <CertificationGuidePage start={() => user ? go("certifications") : setAuthOpen(true)} />}{" "}
         {page === "records" && (recordId ? <SubmissionPage id={recordId} back={() => go("records")} /> : <RecordsPage />)}{" "}
         {page === "discuss" && (
@@ -826,32 +958,42 @@ function App() {
             }}
           />
         )}{" "}
-        {page === "domains" && user && (user.role !== "root" || adminVerified) && (
+        {/* The domain page itself decides what to show from the domain permissions. */}
+        {page === "domains" && user && (
           <DomainsPage user={user} error={setError} changed={() => api.site().then(setSite).catch(() => {})} />
         )}{" "}
-        {page === "account" && user && <AccountPage user={user} changed={setUser} error={setError} />}{" "}
+        {page === "account" && user && <AccountPage user={user} changed={setUser} error={setError} liquidGlass={liquidGlass} setLiquidGlass={setLiquidGlass} compatibility={compatibility} glassTransparency={glassTransparency} setGlassTransparency={setGlassTransparency} glassRefraction={glassRefraction} setGlassRefraction={setGlassRefraction} mascot={mascot} setMascot={setMascot} />}{" "}
+        {page === "customize" && user && <CustomizePage user={user} changed={setUser} error={setError} />}{" "}
+        {page === "ai-assistant" && (user ? <AiAssistantPage user={user} error={setError} /> : <section className="page"><div className="settings-panel ai-login-prompt"><Sparkles /><h1>AI 助手</h1><p>登录后即可使用 AI 助手。</p><button className="primary" onClick={() => setAuthOpen(true)}><LogIn />登录</button></div></section>)}{" "}
         {page === "messages" && user && <MessagesPage error={setError} unreadChanged={setUnread} />}{" "}
-        {page === "blog" && <BlogPage user={user} error={setError} />}{" "}
+        {page === "blog" && <BlogPage key={location.pathname} user={user} error={setError} />}{" "}
+        {page === "moments" && <MomentsPage user={user} error={setError} onRequestsChange={setFriendRequests} />}{" "}
         {page === "files" && user && <FilesPage error={setError} />}{" "}
         {page === "profile" && profileId > 0 && <ProfilePage id={profileId} error={setError} />}{" "}
-        {page === "video-call" && user && <VideoCallPage me={user} peerId={profileId} report={setError} />}{" "}
+
         {page === "about" && <AboutPage error={setError} />}{" "}
         {page === "license" && <LicensePage error={setError} />}{" "}
-        {user && page !== "video-call" && <VideoCall me={user} peer={null} report={setError} />}{" "}
+
         {["queue", "status", "compatibility"].includes(page) && (
           <OperationsPage kind={page as "queue" | "status" | "compatibility"} />
         )}{" "}
+        {/* Exactly one call component per page: ringing is owned here so the chat header can never
+            send a second offer while another one is still pending. */}
+        {user && page !== "video-call" && <VideoCall me={user} peer={null} report={setError} />}
+        {page === "video-call" && user && <VideoCallPage me={user} peerId={profileId} report={setError} />}
         {page === "problem" && selected && (
           <ProblemPage
             problem={selected}
             contestId={selectedContestId}
             user={user}
             login={() => setAuthOpen(true)}
-            back={() => go("problems")}
+            back={() => selectedContestId ? (() => { history.pushState({}, "", `/contests/${selectedContestId}`); setPage("contests"); setSelectedContestId(undefined); scrollTo({ top: 0, left: 0, behavior: "auto" }); })() : go("problems")}
             refresh={load}
           />
         )}
       </main>
+      {user?.custom_css && <style data-user-custom-css dangerouslySetInnerHTML={{ __html: user.custom_css }} />}
+      {(user?.custom_html || user?.custom_head || user?.custom_script) && <CustomHtml html={`${user?.custom_head || ""}${user?.custom_html || ""}${user?.custom_script ? `<script>${user.custom_script}</script>` : ""}`} />}
       <footer>
         <span className="footer-nav">
           <button onClick={() => go("queue")}>评测队列</button>
@@ -862,7 +1004,7 @@ function App() {
           <button onClick={() => go("license")}>许可证</button>
         </span>
         <span>
-          Powered by ©2026{" "}
+          Powered by ©2025-2026{" "}
           <a href="https://github.com/BrightWeb-Dev-Team" target="_blank">
             BrightWeb Dev Team
           </a>
@@ -872,7 +1014,7 @@ function App() {
             href="https://github.com/BrightWeb-Dev-Team/InfiniteJudge"
             target="_blank"
           >
-            InfiniteJudge v{communityVersion.replace(/^v/i, "")} Miku Professional
+            InfiniteJudge v{communityVersion.replace(/^v/i, "")} Professional
           </a>
         </span>
       </footer>
@@ -887,14 +1029,17 @@ function App() {
       )}
       {announcementOpen && <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && setAnnouncementOpen(false)}><section className="announcement-modal"><button className="modal-close" onClick={() => setAnnouncementOpen(false)}><X /></button><span className="kicker">SITE ANNOUNCEMENT</span><h2>关于本站</h2><div className="announcement-modal-body"><Markdown>{site.domainAnnouncement}</Markdown></div><label className="toggle-line"><input type="checkbox" checked={announcementDismiss} onChange={(e) => setAnnouncementDismiss(e.target.checked)} />下次不再弹出</label><button className="primary" onClick={() => { localStorage.setItem("ij-dismissed-announcement", `${site.announcementStartsAt || ""}|${site.announcementEndsAt || ""}|${site.domainAnnouncement || ""}`); setAnnouncementOpen(false); }}>关闭且不再弹出</button></section></div>}
       {tagManagerOpen && <TagManager close={() => setTagManagerOpen(false)} error={setError} />}
+      {banManagerOpen && user?.role === "root" && <BanManager user={user} onClose={() => setBanManagerOpen(false)} error={setError} />}
+      {switchUserOpen && user?.role === "root" && <SwitchUserModal user={user} close={() => setSwitchUserOpen(false)} />}
       {adminVerifyOpen && user?.role === "root" && (
         <AdminVerifyModal
           close={() => {
             setAdminVerifyOpen(false);
             if (page === "settings") go("home");
           }}
-          done={(expiresAt) => {
+          done={(expiresAt, token) => {
             setAdminVerified(true);
+            if (token) sessionStorage.setItem("ij-admin-verification", token);
             sessionStorage.setItem(
               "ij-admin-verification-expires",
               String(expiresAt),
@@ -908,6 +1053,82 @@ function App() {
     </>
   );
 }
+function SwitchUserModal({ user, close }: { user: User; close: () => void }) {
+  const [users, setUsers] = useState<User[]>([]),
+    [targetUid, setTargetUid] = useState(""),
+    [verified, setVerified] = useState<boolean | null>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const target = useUserLookup(targetUid);
+  useEffect(() => {
+    api.adminVerification().then(() => setVerified(true)).catch(() => setVerified(false));
+    api.adminUsers().then(setUsers).catch((err) => setError(err.message));
+  }, []);
+  // The secondary verification only lives in the server's memory, so a restart (or the
+  // 4-hour expiry) turns it stale; remember the requested switch and finish it once the
+  // admin has confirmed their identity again.
+  const pendingUid = useRef<number | null>(null);
+  const suspendVerification = (uid: number) => {
+    sessionStorage.removeItem("ij-admin-verification");
+    sessionStorage.removeItem("ij-admin-verification-expires");
+    pendingUid.current = uid;
+    setVerified(false);
+  };
+  const performSwitch = async (uid: number) => {
+    setBusy(true);
+    setError("");
+    try {
+      try { await api.adminVerification(); }
+      catch { setBusy(false); suspendVerification(uid); return; }
+      const result = await api.switchUser(uid);
+      localStorage.setItem("ij-token", result.token);
+      localStorage.removeItem("ij-domain-id");
+      sessionStorage.removeItem("ij-admin-verification");
+      sessionStorage.removeItem("ij-admin-verification-expires");
+      window.location.replace("/");
+    } catch (err: any) {
+      if (err?.code === "ADMIN_REVERIFY") { setBusy(false); suspendVerification(uid); return; }
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+  const resumeSwitch = () => {
+    const uid = pendingUid.current;
+    if (uid === null) return;
+    pendingUid.current = null;
+    void performSwitch(uid);
+  };
+  if (verified === false) return <AdminVerifyModal close={close} done={(expiresAt, token) => {
+    if (token) sessionStorage.setItem("ij-admin-verification", token);
+    sessionStorage.setItem("ij-admin-verification-expires", String(expiresAt));
+    setVerified(true);
+    resumeSwitch();
+  }} />;
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (busy || !verified || !target.user) return;
+    const uid = Number(targetUid);
+    if (!Number.isSafeInteger(uid) || uid < 1) return setError("请输入有效的用户 UID");
+    if (uid === user.id) return setError("已经是当前用户");
+    void performSwitch(uid);
+  };
+  return <div className="modal-bg">
+    <form className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="switch-user-title" onSubmit={submit}>
+      <button type="button" className="modal-close" title="关闭" aria-label="关闭" disabled={busy} onClick={close}><X /></button>
+      <span className="brand-mark"><UserRoundCog /></span>
+      <h2 id="switch-user-title">切换用户</h2>
+      <label htmlFor="switch-user-uid">用户 UID
+        <input id="switch-user-uid" list="switch-user-options" inputMode="numeric" pattern="[0-9]+" required autoFocus placeholder="输入或选择 UID" value={targetUid} onChange={(event) => setTargetUid(event.target.value)} disabled={busy || !verified} />
+      </label>
+      <datalist id="switch-user-options">
+        {users.filter((entry) => entry.id !== user.id).map((entry) => <option key={entry.id} value={entry.id}>{entry.username}</option>)}
+      </datalist>
+      <UserLookupPreview {...target} />
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <button className="primary" disabled={busy || !verified || !target.user}><UserRoundCog />{verified === null ? "验证中..." : busy ? "切换中..." : "切换用户"}</button>
+    </form>
+  </div>;
+}
 function TagManager({ close, error }: { close: () => void; error: (s: string) => void }) {
   const [tags, setTags] = useState<any[]>([]), [users, setUsers] = useState<any[]>([]), [label, setLabel] = useState(""), [color, setColor] = useState("#b08c00"), [scope, setScope] = useState<"global" | "personal">("personal"), [busy, setBusy] = useState(false), [targetUid, setTargetUid] = useState(""), [selectedTag, setSelectedTag] = useState("-1");
   const load = () => Promise.all([api.adminTags(), api.tagUsers()]).then(([t, u]) => { setTags(t); setUsers(u); }).catch((e) => error(e.message));
@@ -917,26 +1138,42 @@ function TagManager({ close, error }: { close: () => void; error: (s: string) =>
   const assign = async (e: React.FormEvent) => { e.preventDefault(); const uid = Number(targetUid), tagId = Number(selectedTag); const user = users.find((u) => u.id === uid); if (!Number.isInteger(uid) || !user) return error("请输入有效的用户 UID"); if (tagId !== -1 && !tags.some((t) => t.id === tagId)) return error("请选择有效的 Tag"); await toggle(user, tagId); };
   return <div className="modal-bg"><section className="announcement-modal tag-manager"><button className="modal-close" type="button" onClick={close}><X /></button><h2>Tag 管理</h2><form className="tag-create" onSubmit={create}><input required maxLength={24} placeholder="Tag 文字" value={label} onChange={(e) => setLabel(e.target.value)} /><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><select value={scope} onChange={(e) => setScope(e.target.value as any)} aria-label="标签范围"><option value="personal">指定用户</option><option value="global">全体用户</option></select><button className="primary"><Plus />新增</button></form><form className="tag-create" onSubmit={assign}><input required inputMode="numeric" pattern="[0-9]+" placeholder="输入用户 UID" value={targetUid} onChange={(e) => setTargetUid(e.target.value)} /><select value={selectedTag} onChange={(e) => setSelectedTag(e.target.value)} aria-label="选择标签"><option value="-1">作弊者</option>{tags.filter((tag) => !tag.builtin && tag.scope !== "global").map((tag) => <option key={tag.id} value={tag.id}>{tag.label}</option>)}</select><button className="primary" disabled={busy}><Plus />分配 / 取消</button></form><div className="tag-catalog">{tags.map((tag) => <span key={`${tag.id}-${tag.label}`} className="user-custom-tag" style={{ backgroundColor: tag.color }}>{tag.label}{tag.scope === "global" ? " · 全体" : ""}{!tag.builtin && <button type="button" onClick={async () => { try { await api.deleteTag(tag.id); await load(); } catch (e: any) { error(e.message); } }}>×</button>}</span>)}</div><div className="tag-user-list">{users.map((u) => <div key={u.id}><b>UID {u.id} · {u.username}</b><div>{u.tag_ids.filter((id: number) => id === -1 || tags.some((t) => t.id === id)).map((id: number) => { const tag = id === -1 ? { label: "作弊者", color: "#b08c00" } : tags.find((t) => t.id === id); return <span key={id} className={id === -1 ? "cheater-tag" : "user-custom-tag"} style={id === -1 ? undefined : { backgroundColor: tag?.color }}>{tag?.label}</span>; })}</div></div>)}</div></section></div>;
 }
-function CertificationPage({ user, error }: { user: User; error: (s: string) => void }) {
+function CertificationPage({ user, error, go, issuing = false }: { user: User; error: (s: string) => void; go: (page: "certifications" | "certification-create") => void; issuing?: boolean }) {
   const admin = user.role === "admin" || user.role === "root";
   const [manage, setManage] = useState(admin);
+  const [targetUid, setTargetUid] = useState(""), [submitting, setSubmitting] = useState(false);
+  const target = useUserLookup(manage && issuing ? targetUid : "");
   const [items,setItems]=useState<any[]>([]), [form,setForm]=useState({kind:"programming",title:"OI 赛事认证",displayText:"",description:"",color:"#d99a00"});
   const [editingKind,setEditingKind]=useState<string|null>(null);
   const load=()=> (admin&&manage?api.adminCertifications():api.certifications()).then(setItems).catch((e)=>error(e.message));
-  useEffect(()=>{void load();},[manage]);
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();try{const result=await api.applyCertification(form);setEditingKind(null);await load();error(result.status==="approved"?"认证信息已直接生效":"认证信息已提交审核");}catch(e:any){error(e.message);}};
+  useEffect(()=>{if(!issuing)void load();},[manage,issuing]);
+  const submit=async(e:React.FormEvent)=>{
+    e.preventDefault();
+    if(submitting||(manage&&!target.user))return;
+    const userId=Number(targetUid);
+    if(manage&&(!Number.isSafeInteger(userId)||userId<1))return error("请输入有效的用户 UID");
+    setSubmitting(true);
+    try{
+      const result=await api.applyCertification({...form,...(manage?{userId}:{})});
+      setEditingKind(null);setTargetUid("");
+      if(issuing)go("certifications");else await load();
+      error(result.status==="approved"?"认证信息已直接生效":"认证信息已提交审核");
+    }catch(e:any){error(e.message);}finally{setSubmitting(false);}
+  };
   const edit=(item:any)=>{setEditingKind(item.kind);setForm({kind:item.kind,title:item.title,displayText:item.display_text||"",description:item.description||"",color:item.color});window.scrollTo({top:0,behavior:"smooth"});};
   return <section className="page certification-page">
-    <div className="page-title"><div><span className="kicker">VERIFICATION</span><h1>{manage?"管理认证":"认证中心"}</h1><p>{manage?"审核、撤销用户认证。":admin?"管理员的认证新建或修改后直接生效。":"申请或修改认证后需要管理员审核。"}</p></div>{admin&&<button className="plain" onClick={()=>{setManage(!manage);setEditingKind(null);}}>{manage?"我的认证":"返回审批"}</button>}</div>
-    {!manage&&<form className="cert-form" onSubmit={submit}>
+    <div className="page-title"><div><span className="kicker">VERIFICATION</span><h1>{issuing?"发起认证":manage?"管理认证":"认证中心"}</h1>{!issuing&&<p>{manage?"审核、撤销用户认证。":admin?"管理员的认证新建或修改后直接生效。":"申请或修改认证后需要管理员审核。"}</p>}</div>{issuing?<button className="plain" disabled={submitting} onClick={()=>go("certifications")}><ArrowLeft/>返回管理认证</button>:admin&&<div className="cert-actions">{manage&&<button className="primary" disabled={submitting} onClick={()=>go("certification-create")}><Plus/>发起认证</button>}<button className="plain" disabled={submitting} onClick={()=>{setManage(!manage);setEditingKind(null);}}>{manage?"我的认证":"返回审批"}</button></div>}</div>
+    {(!manage||issuing)&&<form className="cert-form" onSubmit={submit}>
+      {manage&&<label>用户 UID<input required inputMode="numeric" pattern="[0-9]+" placeholder="输入用户 UID" value={targetUid} onChange={(e)=>setTargetUid(e.target.value)} disabled={submitting}/></label>}
+      {manage&&<UserLookupPreview {...target} />}
       <select disabled={editingKind!==null} value={form.kind+"|"+form.color+"|"+form.title} onChange={(e)=>{const [kind,color,title]=e.target.value.split("|");setForm({...form,kind,color,title});}}><option value="programming|#d99a00|OI 赛事认证">OI 赛事认证</option><option value="programming|#2daa75|ACM/ICPC 认证">ACM/ICPC 认证</option><option value="personal|#d34b4b|个人认证">个人认证</option><option value="personal|#6b4bbd|管理员认证">管理员认证</option></select>
       {user.role === "root" && <label className="cert-color">认证颜色<input type="color" value={form.color} onChange={(e)=>setForm({...form,color:e.target.value})}/></label>}
       <input required maxLength={80} placeholder="认证名称，如 bilibili 个人认证" value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/>
       <input required maxLength={120} placeholder="认证展示文本，如 bilibili 创始人（站长）" value={form.displayText} onChange={(e)=>setForm({...form,displayText:e.target.value})}/>
       <textarea maxLength={2000} placeholder="证明材料或说明（不会展示在个人主页）" value={form.description} onChange={(e)=>setForm({...form,description:e.target.value})}/>
-      <div className="cert-form-actions"><button className="primary"><ShieldCheck/>{editingKind?"保存修改":admin?"添加认证":"申请认证"}</button>{editingKind&&<button type="button" className="plain" onClick={()=>setEditingKind(null)}>取消编辑</button>}</div>
+      <div className="cert-form-actions"><button className="primary" disabled={submitting||(manage&&!target.user)}><ShieldCheck/>{submitting?"提交中...":manage?"发起认证":editingKind?"保存修改":admin?"添加认证":"申请认证"}</button>{(editingKind||issuing)&&<button type="button" className="plain" disabled={submitting} onClick={()=>issuing?go("certifications"):setEditingKind(null)}>{issuing?"取消":"取消编辑"}</button>}</div>
     </form>}
-    <div className="cert-list">{items.map(x=><article key={x.id}><div><b>{x.username||x.title}</b>{x.username&&<span>{x.title}</span>}<p className="cert-display-text">{x.display_text||"未设置展示文本"}</p><p>{x.description||"暂无证明材料或说明"}</p></div><span className="verification-badge" style={{color:x.color}}><BadgeCheck/> {x.status==="approved"?"已认证":x.status==="pending"?"待审核":x.status==="revoked"?"已撤销":"未通过"}</span>{manage&&admin?<div className="cert-actions">{x.status!=="approved"&&<button className="primary" onClick={async()=>{await api.reviewCertification(x.id,"approved");load();}}>同意</button>}<button className="plain" onClick={async()=>{await api.reviewCertification(x.id,x.status==="approved"?"revoked":"rejected");load();}}>{x.status==="approved"?"撤销":"拒绝"}</button></div>:<button className="plain" onClick={()=>edit(x)}>编辑</button>}</article>)}</div>
+    {!issuing&&<div className="cert-list">{items.map(x=><article key={x.id}><div><b>{x.username||x.title}</b>{x.username&&<span>{x.title}</span>}<p className="cert-display-text">{x.display_text||"未设置展示文本"}</p><p>{x.description||"暂无证明材料或说明"}</p></div><span className="verification-badge" style={{color:x.color}}><BadgeCheck/> {x.status==="approved"?"已认证":x.status==="pending"?"待审核":x.status==="revoked"?"已撤销":"未通过"}</span>{manage&&admin?<div className="cert-actions">{x.status!=="approved"&&<button className="primary" onClick={async()=>{await api.reviewCertification(x.id,"approved");load();}}>同意</button>}<button className="plain" onClick={async()=>{await api.reviewCertification(x.id,x.status==="approved"?"revoked":"rejected");load();}}>{x.status==="approved"?"撤销":"拒绝"}</button></div>:<button className="plain" onClick={()=>edit(x)}>编辑</button>}</article>)}</div>}
   </section>;
 }
 function CertificationGuidePage({ start }: { start: () => void }) {
@@ -957,6 +1194,9 @@ function CertificationGuidePage({ start }: { start: () => void }) {
 }
 function VideoCallPage({ me, peerId, report }: { me: User; peerId: number; report: (message: string) => void }) {
   const [peer, setPeer] = useState<User | null>(null);
+  const [calling, setCalling] = useState(false);
+  useEffect(() => { const end = () => { setCalling(false); leaveCall("ended"); }; window.addEventListener(CALL_ENDED, end); return () => window.removeEventListener(CALL_ENDED, end); }, [peerId]);
+  const startOutgoing = (target: User) => { setCalling(true); startCall({ uid: target.id, name: target.username, avatar: target.avatar }); };
   const [online, setOnline] = useState<boolean | null>(null);
   useEffect(() => { if (peerId) api.userProfile(peerId).then(setPeer).catch(() => {}); }, [peerId]);
   useEffect(() => { if (!peerId) return; let stopped = false; const poll = () => api.userPresence(peerId).then((value) => { if (!stopped) setOnline(value.online); }).catch(() => {}).finally(() => { if (!stopped) window.setTimeout(poll, 15000); }); void poll(); return () => { stopped = true; }; }, [peerId]);
@@ -965,20 +1205,20 @@ function VideoCallPage({ me, peerId, report }: { me: User; peerId: number; repor
     history.pushState({}, "", "/messages");
     dispatchEvent(new PopStateEvent("popstate"));
   };
-  return <section className="page video-call-page"><div className="page-title"><div><span className="kicker">VIDEO CALL</span><h1>视频通话</h1><p>与 {peer?.username || `UID ${peerId}`} 进行视频通话。</p></div><div className="video-presence"><i className={online ? "online" : "offline"} />{online === null ? "检查中" : online ? "在线" : "不在线"}<button className="plain" onClick={() => history.back()}>返回消息</button></div></div><div className="video-call-stage"><VideoCall me={me} peer={peer ? { uid: peer.id, name: peer.username, avatar: peer.avatar } : { uid: peerId, name: `UID ${peerId}` }} report={report} autoStart onEnded={leaveCall} /></div></section>;
+  return <section className="page video-call-page"><div className="page-title"><div><span className="kicker">VIDEO CALL</span><h1>视频通话</h1><p>与 {peer?.username || `UID ${peerId}`} 进行视频通话。</p></div><div className="video-presence"><i className={online ? "online" : "offline"} />{online === null ? "检查中" : online ? "在线" : "不在线"}<button className="plain" onClick={() => history.back()}>返回消息</button></div></div><div className="video-call-stage">{peer ? <button className="primary" onClick={() => startOutgoing(peer)}><Video />{calling ? "正在呼叫…" : "开始视频通话"}</button> : <p>正在加载对方资料…</p>}</div></section>;
 }
 function AdminVerifyModal({
   close,
   done,
 }: {
   close: () => void;
-  done: (expiresAt: number) => void;
+  done: (expiresAt: number, token?: string) => void;
 }) {
   const [password, setPassword] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const passkeyVerify=async()=>{setBusy(true);setError("");try{const {options,ceremony}=await api.adminPasskeyOptions();const response=await startAuthentication({optionsJSON:options});const result=await api.verifyAdminPasskey(ceremony,response);sessionStorage.setItem("ij-admin-verification",result.token);done(result.expiresAt);}catch(e:any){if(!String(e.message||"").includes("尚未设置"))setError(e.name==="NotAllowedError"?"已取消通行密钥验证，可使用密码继续":e.message);}finally{setBusy(false);}};
-  useEffect(()=>{void passkeyVerify();},[]);
+    [busy, setBusy] = useState(false),
+    [method, setMethod] = useState<"password" | "passkey">("password");
+  const passkeyVerify=async()=>{setBusy(true);setError("");try{const {options,ceremony}=await api.adminPasskeyOptions();const response=await startAuthentication({optionsJSON:options});const result=await api.verifyAdminPasskey(ceremony,response);done(result.expiresAt,result.token);}catch(e:any){if(!String(e.message||"").includes("尚未设置"))setError(e.name==="NotAllowedError"?"已取消通行密钥验证，可使用密码继续":e.message);}finally{setBusy(false);}};
   return (
     <div className="modal-bg">
       <form
@@ -989,8 +1229,7 @@ function AdminVerifyModal({
           setError("");
           try {
             const result = await api.verifyAdmin(password);
-            sessionStorage.setItem("ij-admin-verification", result.token);
-            done(result.expiresAt);
+            done(result.expiresAt, result.token);
           } catch (e: any) {
             setError(e.message);
           } finally {
@@ -1004,9 +1243,10 @@ function AdminVerifyModal({
         <span className="brand-mark">
           <ShieldCheck />
         </span>
-        <h2>管理员二次验证</h2>
-        <p>为保护控制面板，请验证当前管理员身份。验证在 4 小时后失效。</p>
-        <label>
+        <h2>确认管理员身份</h2>
+        <p>选择密码或通行密钥其中一种方式确认身份。确认结果在 4 小时后失效。</p>
+        <div className="auth-methods"><button type="button" className={method === "password" ? "active" : ""} onClick={() => setMethod("password")}>密码</button><button type="button" className={method === "passkey" ? "active" : ""} onClick={() => setMethod("passkey")}>通行密钥</button></div>
+        {method === "password" && <label>
           管理员密码
           <input
             autoFocus
@@ -1015,13 +1255,9 @@ function AdminVerifyModal({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-        </label>
+        </label>}
         {error && <div className="form-error">{error}</div>}
-        <button className="primary" disabled={busy}>
-          <ShieldCheck />
-          {busy ? "验证中..." : "验证并进入"}
-        </button>
-        <button type="button" className="plain oauth-button" disabled={busy} onClick={passkeyVerify}><KeyRound />使用通行密钥验证</button>
+        {method === "password" ? <button className="primary" disabled={busy}><ShieldCheck />{busy ? "确认中..." : "确认并进入"}</button> : <button type="button" className="primary" disabled={busy} onClick={passkeyVerify}><KeyRound />{busy ? "确认中..." : "使用通行密钥确认"}</button>}
       </form>
     </div>
   );
@@ -1058,10 +1294,10 @@ function LearningPage({ kind, user, problems, openProblem, error }: { kind: "tra
 function RankingPage({ openProfile }: { openProfile: (id: number) => void }) {
   return <section className="page"><div className="page-title"><span className="kicker">RATING</span><h1>RP 排行榜</h1><p>由固定 RP 与刷题浮动 RP 组成；越早通过、该题通过人数越少，获得的浮动 RP 越高。</p></div><RpRanking openProfile={openProfile} /></section>;
 }
-function RpRanking({ compact = false, openProfile }: { compact?: boolean; openProfile?: (id: number) => void }) {
+function RpRanking({ compact = false, openProfile }: { compact?: boolean; openProfile: (id: number) => void }) {
   const [rows, setRows] = useState<any[]>([]); useEffect(() => { api.ranking().then(setRows).catch(() => {}); }, []);
   const guide=(event:React.MouseEvent|React.KeyboardEvent)=>{event.stopPropagation();history.pushState({},"","/certifications/guide");dispatchEvent(new PopStateEvent("popstate"));};
-  return <div className={compact ? "rp-board compact" : "rp-board"}><div className="rp-head"><span>排名</span><span>用户</span><span>通过</span><span>RP</span></div>{rows.slice(0, compact ? 8 : 100).map((row, index) => <div role="button" tabIndex={0} className="rp-row" key={row.id} onClick={() => openProfile?.(row.id)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" ")openProfile?.(row.id);}}><b>{index + 1}</b><span className="rp-user">{row.avatar ? <img src={row.avatar} /> : <i>{row.username[0].toUpperCase()}</i>}{row.username}{row.certifications?.map((cert: any) => <button type="button" key={cert.id} className="verification-icon certification-link" style={{color:cert.color}} data-certification={`${cert.title}\n${cert.display_text||"已通过认证"}`} aria-label={`${cert.title}：${cert.display_text||"已通过认证"}，点击查看认证说明`} onKeyDown={(e)=>e.stopPropagation()} onClick={guide}><BadgeCheck/></button>)}{row.tags?.map((tag: any) => <em key={tag.id} className="user-custom-tag" style={{ backgroundColor: tag.color }}>{tag.label}</em>)}{row.cheater ? <em className="cheater-tag">作弊者</em> : null}</span><span>{row.solved}</span><strong>{row.rp}</strong></div>)}</div>;
+  return <div className={compact ? "rp-board compact" : "rp-board"}><div className="rp-head"><span>排名</span><span>用户</span><span>通过</span><span>RP</span></div>{rows.slice(0, compact ? 8 : 100).map((row, index) => <div role="button" tabIndex={0} className="rp-row" key={row.id} onClick={() => openProfile(row.id)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openProfile(row.id);}}}><b>{index + 1}</b><span className="rp-user">{row.avatar ? <img src={row.avatar} /> : <i>{row.username[0].toUpperCase()}</i>}<span className="rp-name">{row.username}</span>{row.certifications?.map((cert: any) => <button type="button" key={cert.id} className="verification-icon certification-link" style={{color:cert.color}} data-certification={`${cert.title}\n${cert.display_text||"已通过认证"}`} aria-label={`${cert.title}：${cert.display_text||"已通过认证"}，点击查看认证说明`} onKeyDown={(e)=>e.stopPropagation()} onClick={guide}><BadgeCheck/></button>)}{row.tags?.map((tag: any) => <em key={tag.id} className="user-custom-tag" style={{ backgroundColor: tag.color }}>{tag.label}</em>)}{row.cheater ? <em className="cheater-tag">作弊者</em> : null}</span><span>{row.solved}</span><strong>{row.rp}</strong></div>)}</div>;
 }
 function Hitokoto() {
   const [quote, setQuote] = useState({ text: "正在获取一言...", from: "", url: "https://hitokoto.cn" });
@@ -1075,7 +1311,7 @@ function AboutPage({ error }: { error: (message: string) => void }) {
   const content = about.content || `# 关于 ${about.name}\n\n${about.name} 是一个在线评测与算法训练平台。`;
   const version = about.version.replace(/^v/i, "");
   return <section className="page about-page">
-    <header className="about-header"><div><span className="kicker">ABOUT</span><h1>{about.name}</h1><p>在线评测、算法训练与竞赛管理平台</p></div><span className="about-version">InfiniteJudge v{version} Miku Professional</span></header>
+    <header className="about-header"><div><span className="kicker">ABOUT</span><h1>{about.name}</h1><p>在线评测、算法训练与竞赛管理平台</p></div><span className="about-version">InfiniteJudge v{version} Professional</span></header>
     <article className="about-content"><RichMarkdown>{content}</RichMarkdown></article>
   </section>;
 }
@@ -1213,25 +1449,27 @@ function AuthModal({
   done: (u: User) => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login"),
+    [nativeShell] = useState(() => Boolean((window as any).ChatNative)),
+    [loginMethod, setLoginMethod] = useState<"password" | "passkey">("password"),
     [name, setName] = useState(""),
     [password, setPassword] = useState(""),
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
     [emailVerification, setEmailVerification] = useState(false),
-    [brightwebOauth, setBrightwebOauth] = useState(false),
+    [auth0Enabled, setAuth0Enabled] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  useEffect(() => { api.authConfig().then((value) => { setEmailVerification(value.emailVerification); setBrightwebOauth(Boolean(value.brightwebOauth?.enabled)); }).catch(() => {}); }, []);
+  useEffect(() => { api.authConfig().then((value) => { setEmailVerification(value.emailVerification); setAuth0Enabled(Boolean(value.auth0?.enabled)); }).catch(() => {}); }, []);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
       let r;
-      if(mode==="login"){
-        try{const {options,ceremony}=await api.passkeyLoginOptions(name);const response=await startAuthentication({optionsJSON:options});r=await api.passkeyLogin(ceremony,response);}
-        catch(passkeyError:any){if(passkeyError.name==="NotAllowedError")throw new Error("已取消通行密钥登录");if(!password)throw passkeyError;r=await api.login(name,password);}
-      }else r=await api.register(name,password,email,code);
+      if(mode==="login") {
+        if (loginMethod === "password") r = await api.login(name,password);
+        else { const {options,ceremony}=await api.passkeyLoginOptions(name); const response=await startAuthentication({optionsJSON:options}); r=await api.passkeyLogin(ceremony,response); }
+      } else r=await api.register(name,password,email,code);
       localStorage.setItem("ij-token", r.token);
       done(r.user);
     } catch (e: any) {
@@ -1258,6 +1496,7 @@ function AuthModal({
             ? "登录后提交代码并记录进度"
             : "加入 Infinte Judge，开始算法训练"}
         </p>
+        {mode === "login" && !nativeShell && <div className="auth-methods"><button type="button" className={loginMethod === "password" ? "active" : ""} onClick={() => setLoginMethod("password")}>密码登录</button><button type="button" className={loginMethod === "passkey" ? "active" : ""} onClick={() => setLoginMethod("passkey")}>通行密钥登录</button></div>}
         <label>
           用户名
           <input
@@ -1270,24 +1509,24 @@ function AuthModal({
             placeholder="3-24 个中文、字母、数字或下划线字符"
           />
         </label>
-        <label>
+        {(mode === "register" || loginMethod === "password" || nativeShell) && <label>
           密码
           <input
+            required={mode === "register" || loginMethod === "password" || nativeShell}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="至少 8 位"
           />
-        </label>
+        </label>}
         {mode === "register" && emailVerification && <>
           <label>邮箱<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label>验证码<div className="email-code-row"><input required value={code} onChange={(e) => setCode(e.target.value)} /><button type="button" className="plain" onClick={async () => { try { await api.sendEmailCode(email); setError("验证码已发送"); } catch (e: any) { setError(e.message); } }}>发送验证码</button></div></label>
         </>}
         {error && <div className="form-error">{error}</div>}
-        {mode === "login" && brightwebOauth && <button type="button" className="plain oauth-button" onClick={() => { location.href = "/api/auth/brightweb/start"; }}>使用 BrightWeb 登录</button>}
-        {mode === "login" && <button type="button" className="plain oauth-button" disabled={busy || !name.trim()} onClick={async () => { setBusy(true); setError(""); try { const { options, ceremony } = await api.passkeyLoginOptions(name); const response = await startAuthentication({ optionsJSON: options }); const r = await api.passkeyLogin(ceremony, response); localStorage.setItem("ij-token", r.token); done(r.user); } catch (e: any) { setError(e.name === "NotAllowedError" ? "已取消通行密钥登录" : e.message); } finally { setBusy(false); } }}><KeyRound />使用通行密钥登录</button>}
+        {mode === "login" && auth0Enabled && !nativeShell && <button type="button" className="plain oauth-button" disabled={busy} onClick={() => { location.href = "/api/auth/auth0/start"; }}>使用 Auth0 统一登录</button>}
         <button className="primary" disabled={busy}>
-          {busy ? "请稍候..." : mode === "login" ? "登录" : "注册"}
+          {busy ? "请稍候..." : mode === "login" ? loginMethod === "password" || nativeShell ? "使用密码登录" : "使用通行密钥登录" : "注册"}
         </button>
         <button
           type="button"
@@ -1300,21 +1539,78 @@ function AuthModal({
     </div>
   );
 }
+// User-supplied HTML/JS runs in a sandboxed frame without same-origin access, so hosting a
+// hostile custom_head can no longer read the visitor's session token from this origin.
+function CustomHtml({ html }: { html: string }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const frame = ref.current;
+    if (!frame) return;
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;font:inherit;color:inherit;background:transparent;overflow:hidden}</style></head><body>${html}</body></html>`);
+    doc.close();
+    let frameId = 0;
+    const measure = () => {
+      const next = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0);
+      setHeight((current) => current === next ? current : next);
+      frameId = requestAnimationFrame(measure);
+    };
+    frameId = requestAnimationFrame(measure);
+    return () => { cancelAnimationFrame(frameId); doc.open(); doc.write(""); doc.close(); };
+  }, [html]);
+  return <iframe className="user-custom-html" ref={ref} sandbox="allow-scripts" title="用户自定义内容" style={{ height: height ? `${height}px` : "auto" }} />;
+}
+
+function CustomizePage({ user, changed, error }: { user: User; changed: (value: User) => void; error: (message: string) => void }) {
+  const [tab, setTab] = useState<"css" | "script" | "body" | "head">("css");
+  const [css, setCss] = useState(user.custom_css || ""), [script, setScript] = useState(user.custom_script || ""), [body, setBody] = useState(user.custom_html || ""), [head, setHead] = useState(user.custom_head || ""), [loading, setLoading] = useState(true), [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.customize().then((value) => {
+      if (cancelled) return;
+      setCss(value.custom_css); setScript(value.custom_script); setBody(value.custom_html); setHead(value.custom_head);
+      changed({ ...user, ...value });
+    }).catch((cause: Error) => { if (!cancelled) error(`无法从服务器读取自定义内容：${cause.message}`); }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [user.id]);
+  const value = tab === "css" ? css : tab === "script" ? script : tab === "body" ? body : head;
+  const update = (next: string) => tab === "css" ? setCss(next) : tab === "script" ? setScript(next) : tab === "body" ? setBody(next) : setHead(next);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.updateCustomize({ custom_css: css, custom_script: script, custom_html: body, custom_head: head });
+      const stored = await api.customize();
+      setCss(stored.custom_css); setScript(stored.custom_script); setBody(stored.custom_html); setHead(stored.custom_head);
+      changed({ ...user, ...stored }); error("自定义内容已保存到服务器");
+    } catch (cause: any) { error(`服务器保存失败：${cause.message}`); }
+    finally { setSaving(false); }
+  };
+  return <section className="page customize-simple"><div className="customize-panel"><nav className="customize-tabs">{[["css","自定义 CSS"],["script","自定义 Script"],["body","自定义 HTML (body)"],["head","自定义 HTML (head)"]].map(([id,label]) => <button type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id as any)} key={id}>{label}</button>)}</nav><div className="customize-editor-wrap"><div className="customize-gutter">{value.split("\n").map((_, index) => <span key={index}>{index + 1}</span>)}</div><textarea className="customize-editor" value={value} onChange={(event) => update(event.target.value)} disabled={loading} spellCheck={false} /></div><footer className="customize-actions"><button className="primary" type="button" onClick={save} disabled={loading || saving}><Save />{loading ? "读取中..." : saving ? "保存中..." : "保存"}</button><button className="plain" type="button" disabled={loading || saving} onClick={() => { setCss(user.custom_css || ""); setScript(user.custom_script || ""); setBody(user.custom_html || ""); setHead(user.custom_head || ""); }}>重置</button><span>版权区域由 InfiniteJudge 固定提供</span></footer></div></section>;
+}
+
 function HomePage({
   problems,
   announcement,
   carousel,
+  carouselInterval,
   user,
   go,
   open,
+  openProfile,
   error,
 }: {
   problems: Problem[];
   announcement?: string;
   carousel?: SiteConfig["carousel"];
+  carouselInterval?: number;
   user: User | null;
   go: (p: Exclude<Page, "problem" | "profile">) => void;
   open: (p: Problem) => void;
+  openProfile: (id: number) => void;
   error: (s: string) => void;
 }) {
   return (
@@ -1323,10 +1619,10 @@ function HomePage({
         <section className="announcement">
           <Markdown>{announcement}</Markdown>
         </section>
-        <section className="home-ranking"><div className="section-heading"><div><span className="kicker">RATING</span><h2>RP 排行榜</h2></div><button className="plain" onClick={() => go("ranking")}>查看全部<ChevronRight /></button></div><RpRanking compact /></section>
+        <section className="home-ranking"><div className="section-heading"><div><span className="kicker">RATING</span><h2>RP 排行榜</h2></div><button className="plain" onClick={() => go("ranking")}>查看全部<ChevronRight /></button></div><RpRanking compact openProfile={openProfile} /></section>
       </div>
       <aside className="hydro-side">
-        <Carousel items={carousel} />
+        <Carousel items={carousel} interval={carouselInterval} />
         <Hitokoto />
         <Countdown admin={(user?.role === "admin" || user?.role === "root")} error={error} />
         <section>
@@ -1354,13 +1650,15 @@ function HomePage({
   );
 }
 
-function Carousel({ items }: { items?: SiteConfig["carousel"] }) {
-  const valid = (items || []).filter((item) => item?.image);
+function Carousel({ items, interval = 5 }: { items?: SiteConfig["carousel"]; interval?: number }) {
+  const valid = (items || []).filter((item) => item?.image?.trim());
+  const intervalMs = Math.max(1, Math.min(60, Number(interval) || 5)) * 1000;
   const [index, setIndex] = useState(0);
-  useEffect(() => { if (valid.length < 2) return; const timer = window.setInterval(() => setIndex((value) => (value + 1) % valid.length), 5000); return () => window.clearInterval(timer); }, [valid.length]);
+  useEffect(() => setIndex(0), [items]);
+  useEffect(() => { if (valid.length < 2) return; const timer = window.setInterval(() => setIndex((value) => (value + 1) % valid.length), intervalMs); return () => window.clearInterval(timer); }, [valid.length, intervalMs]);
   if (!valid.length) return null;
   const item = valid[index % valid.length];
-  const content = <><img src={item.image} alt={item.title || ""} /><div className="home-carousel-caption">{item.title}</div><div className="home-carousel-dots">{valid.map((_, i) => <button type="button" className={i === index ? "active" : ""} onClick={() => setIndex(i)} key={i} aria-label={`第${i + 1}张`} />)}</div></>;
+  const content = <><img src={item.image} alt={item.title || ""} />{item.title && <div className="home-carousel-caption">{item.title}</div>}{valid.length > 1 && <div className="home-carousel-dots">{valid.map((_, i) => <button type="button" className={i === index ? "active" : ""} onClick={(event) => { event.preventDefault(); setIndex(i); }} key={i} aria-label={`第${i + 1}张`} />)}</div>}</>;
   return <section className="home-carousel">{item.link ? <a href={item.link} target="_blank" rel="noreferrer">{content}</a> : content}</section>;
 }
 
@@ -1622,6 +1920,45 @@ const codeKeywords: Record<string, RegExp> = {
   python: /^(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)$/,
   java: /^(?:abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|false|final|finally|float|for|if|implements|import|instanceof|int|interface|long|native|new|null|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|true|try|void|volatile|while)$/
 };
+const INTEGRITY_PREFIX = /^[ \t]*\/\/@ij[0-9a-f]{10}[^\n]*\n?/;
+const INTEGRITY_SUFFIX = /\n?[ \t]*\/\/@ij[0-9a-f]{10}[^\n]*[ \t]*$/;
+const stripIntegrityMarks = (code: string) => code.replace(INTEGRITY_PREFIX, "").replace(INTEGRITY_SUFFIX, "");
+// The trailing checksum is a fresh echo of the last edit, so a model that
+// copies the editor text or drives the page in a newer session is visible.
+const integrityChecksum = (body: string, nonce: string, checksum: string) =>
+  `${hashString(`${nonce}:${body}:${checksum}`).slice(0, 6)} ${(body.length % 997).toString(16).padStart(3, "0")}`;
+function hashString(value: string) {
+  let h1 = 0x811c9dc5, h2 = 0x1000193;
+  for (let i = 0; i < value.length; i++) { h1 = Math.imul(h1 ^ value.charCodeAt(i), 16777619); h2 = Math.imul(h2 + value.charCodeAt(i), 2654435761) >>> 0; }
+  return (h1 >>> 0).toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+}
+function enforceIntegrityCode(code: string, session: IntegritySession, locked: boolean) {
+  if (!session.watermark || !session.checksum) return code;
+  const body = locked ? stripIntegrityMarks(code) : trimTemplate(stripIntegrityMarks(code));
+  return `${session.watermark}\n// 本题开启 AI 作弊检测，请独立完成。提交前确认末尾校验行仍在。\n${body}\n// 校验 ${integrityChecksum(body, session.checksum, session.checksum)}\n`;
+}
+const trimTemplate = (code: string) => code.trimEnd();
+const codeLineCount = (code: string) => code.split(/\r?\n/).filter((line) => line.trim()).length;
+function AccessibleBan({ problemId, session, onRead, answer }: { problemId: string; session: IntegritySession; onRead: (token: string) => void; answer: (token: string) => void }) {
+  const token = hashString(`${session.checksum}:${problemId}:${session.session_id}`).slice(0, 8);
+  const answered = useRef(false);
+  const trigger = () => {
+    onRead(session.ban_token || "");
+    if (answered.current) return;
+    answered.current = true;
+    // The run comes from the server's protected summary, never from the editor.
+    answer(token);
+  };
+  return (
+    <div className="integrity-ban" role="note" aria-live="polite" aria-label={`${session.ban} 回执 ${session.checksum}`} data-integrity-ban={token}
+      onClick={trigger} onFocus={trigger}
+      style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0, opacity: 0.01 }}>
+      <p>{session.ban}</p>
+      <p>如你是辅助技术使用者，可继续正常作答；该回执仅用于区分代答请求。回执 {session.checksum}</p>
+      <button type="button" tabIndex={0} onClick={trigger}>确认</button>
+    </div>
+  );
+}
 function highlightCode(code: string, lang: "cpp" | "python" | "java") {
   const token = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b)/g;
   const parts: React.ReactNode[] = []; let end = 0;
@@ -1654,7 +1991,53 @@ function ProblemPage({
     [blocked, setBlocked] = useState(false),
     [editorFontSize, setEditorFontSize] = useState(() => { const saved = Number(localStorage.getItem("ij-editor-font-size")); return saved >= 10 && saved <= 24 ? saved : 12; }),
     [answer, setAnswer] = useState<any[]>([]),
-    [showAntiCheatNotice, setShowAntiCheatNotice] = useState(Boolean(problem.anti_cheat_enabled && (!user || !["root", "admin"].includes(user.role))));
+    [showAntiCheatNotice, setShowAntiCheatNotice] = useState(Boolean(problem.anti_cheat_enabled && (!user || !["root", "admin"].includes(user.role)))),
+    [integrity, setIntegrity] = useState<IntegritySession | null>(null),
+    [integrityError, setIntegrityError] = useState(""),
+    [integrityGuard, setIntegrityGuard] = useState<{ run: () => void } | null>(null),
+    [integrityGate, setIntegrityGate] = useState<{ key: string; queued: boolean } | null>(null),
+    [integrityBlocked, setIntegrityBlocked] = useState(""),
+    [integrityAnswer, setIntegrityAnswer] = useState<(IntegrityRun & { ban: string }) | null>(null),
+    [integrityNote, setIntegrityNote] = useState(""),
+    [integrityStatement, setIntegrityStatement] = useState<IntegritySession["statement"]>(undefined);
+  const integrityBuffer = useRef<any[]>([]), codeRef = useRef(code), blockedRef = useRef(blocked), baselineRef = useRef("");
+  codeRef.current = code; blockedRef.current = blocked;
+  const accountRef = useRef<number>(0), lockedRef = useRef(false);
+  if (integrity) { accountRef.current = integrity.session_id || 0; lockedRef.current = baselineRef.current !== ""; }
+  const nowRef = useRef(0);
+  nowRef.current = Date.now();
+  const integrityActive = Boolean(user && problem.integrity_enabled && !["root", "admin"].includes(user.role));
+  const [masked, setMasked] = useState(false);
+  // Answering state masking: the statement only renders while this window has
+  // focus. Screen recording or a helper window taking over hides it.
+  useEffect(() => {
+    if (!integrityActive) { setMasked(false); return; }
+    const sync = () => setMasked(!document.hasFocus() || document.visibilityState === "hidden");
+    sync();
+    const timer = window.setInterval(() => setMasked(!document.hasFocus()), 1200);
+    window.addEventListener("focus", sync); window.addEventListener("blur", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", sync); window.removeEventListener("blur", sync); document.removeEventListener("visibilitychange", sync); };
+  }, [integrityActive, problem.id]);
+  // Screenshot hotkeys are not blocked (students may need them); they are logged.
+  useEffect(() => {
+    if (!integrityActive) return;
+    const onKey = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const shot = key === "printscreen" || (event.metaKey && event.shiftKey && (key === "3" || key === "4" || key === "5")) || (event.ctrlKey && event.shiftKey && key === "s");
+      if (shot) integrityBuffer.current.push({ type: "screenshot", chars: 0, at: Date.now() });
+      if (event.type === "keyup" && shot) setIntegrityNote("截图快捷键已记录，仅用于事后核对");
+    };
+    window.addEventListener("keydown", onKey, true); window.addEventListener("keyup", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); };
+  }, [integrityActive, problem.id]);
+  // A statement copied from another copy of the page carries that copy's mark.
+  useEffect(() => {
+    if (!integrityActive) return;
+    const onCopy = () => { const selection = String(window.getSelection() || ""); if (selection.length >= 40) integrityBuffer.current.push({ type: "statement", chars: selection.length, text: selection }); };
+    document.addEventListener("copy", onCopy);
+    return () => document.removeEventListener("copy", onCopy);
+  }, [integrityActive, problem.id]);
   useEffect(() => {
     if (!user || !problem.anti_cheat_enabled || ["root", "admin"].includes(user.role)) return;
     const onVisibility = () => {
@@ -1664,6 +2047,43 @@ function ProblemPage({
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [problem.id, problem.anti_cheat_enabled, user]);
+  const flushIntegrity = (extra: any[] = []) => {
+    const events = [...integrityBuffer.current, ...extra];
+    integrityBuffer.current = [];
+    if (!events.length) return Promise.resolve();
+    return api.integrityEvent(problem.id, events).then((r) => {
+      if (r.verdict === "Blocked") setIntegrityBlocked("答题风险分数已达拦截线，本次提交会被判 0 分");
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    if (!integrityActive) { setIntegrity(null); return; }
+    let alive = true;
+    api.integrityStart(problem.id, { language: lang }).then((value) => { if (alive && value.active) { setIntegrity(value); setIntegrityStatement(value.statement); } }).catch((cause: any) => { if (alive) setIntegrityError(cause.message); });
+    return () => { alive = false; };
+  }, [problem.id, integrityActive, lang]);
+  useEffect(() => {
+    if (!integrityActive) return;
+    const timer = window.setInterval(() => { if (!blockedRef.current) void flushIntegrity(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [problem.id, integrityActive]);
+  useEffect(() => {
+    if (!integrityActive) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!(target instanceof HTMLTextAreaElement) || target.getAttribute("aria-label") !== "代码编辑器") return;
+      const chars = event.clipboardData?.getData("text")?.length || 0;
+      if (chars >= 20) integrityBuffer.current.push({ type: "paste", chars, source: "text" });
+    };
+    const onDrop = (event: DragEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest?.(".code-editor")) return;
+      const text = event.dataTransfer?.getData("text") || "";
+      if (text.length >= 20) integrityBuffer.current.push({ type: "paste", chars: text.length, source: "drop" });
+    };
+    document.addEventListener("paste", onPaste, true);
+    document.addEventListener("drop", onDrop, true);
+    return () => { document.removeEventListener("paste", onPaste, true); document.removeEventListener("drop", onDrop, true); };
+  }, [problem.id, integrityActive]);
   function language(v: "cpp" | "python" | "java") {
     setLang(v);
     setCode(starter[v]);
@@ -1671,12 +2091,20 @@ function ProblemPage({
   function changeEditorFontSize(size: number) { setEditorFontSize(size); localStorage.setItem("ij-editor-font-size", String(size)); }
   async function submit() {
     if (!user) return login();
-    if (blocked) return;
+    if (blocked || integrityBlocked) return;
     setBusy(true);
     try {
       const objective=problem.question_type && problem.question_type!=="programming";
+      if (integrityActive && !objective) {
+        // Two different windows on the same protected problem: the student's page
+        // is gone and whatever is submitting now is re-opened or scripted.
+        if (accountRef.current && accountRef.current !== integrity?.session_id) {
+          await api.integrityEvent(problem.id, [{ type: "files", files: [{ name: "reopened", ban_seen: true, content: "" }] }]).catch(() => {});
+        }
+      }
       const s = await api.submit(objective ? {problem_id:problem.id,answer,contest_id:contestId} : {problem_id:problem.id,language:lang,source:code,contest_id:contestId});
       setResult(s);
+      if (s.status === "AntiCheat") { setBusy(false); refresh(); return; }
       if(objective){setBusy(false);refresh();return;}
       let tries = 0;
       const poll = setInterval(async () => {
@@ -1690,11 +2118,41 @@ function ProblemPage({
       }, 500);
     } catch (e: any) {
       setResult({ status: "Error", error: e.message });
+      if (e.code === "INTEGRITY_BLOCKED") setIntegrityBlocked(e.message);
       setBusy(false);
     }
   }
+  const guardActive = integrityActive && (!problem.question_type || problem.question_type === "programming") && !integrityBlocked;
+  useEffect(() => {
+    if (!guardActive) { setIntegrityGuard(null); return; }
+    setIntegrityGuard({ run: () => { void submit(); } });
+  });
+  // Baseline survives reloads and auto re-open: it belongs to the problem, not
+  // to one page view, so code copied from the summary dialog follows the student.
+  const baselineKey = `ij-integrity:${problem.id}:${user?.id || 0}`;
+  useEffect(() => {
+    if (!integrity?.session_id) return;
+    const saved = localStorage.getItem(baselineKey);
+    if (saved && !baselineRef.current) { baselineRef.current = saved; setCode((current) => enforceIntegrityCode(current, integrity, true)); return; }
+    // The first protected start wraps the template and locks the baseline; later
+    // starts or language switches re-apply watermarks without restarting it.
+    const locked = baselineRef.current !== "";
+    setCode((current) => {
+      const next = enforceIntegrityCode(current, integrity, locked);
+      if (!locked) { baselineRef.current = stripIntegrityMarks(next).trimEnd(); localStorage.setItem(baselineKey, baselineRef.current); }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [integrity?.session_id, integrity?.checksum, lang]);
   return (
     <section className="problem-view">
+      {integrityActive && integrity && (
+        <AccessibleBan problemId={problem.id} session={integrity}
+          onRead={(token) => integrityBuffer.current.push({ type: "paste", chars: 0, source: "text", ban_seen: true, ban_token: token })}
+          answer={(token) => api.integrityRun(problem.id, { source: code, summary: problem.sample_output || "", language: lang })
+            .then((run) => { setIntegrityAnswer({ ...run, ban: token }); })
+            .catch(() => {})} />
+      )}
       {showAntiCheatNotice && (
         <div className="modal-bg" role="dialog" aria-modal="true">
           <div className="auth-modal anti-cheat-notice">
@@ -1728,7 +2186,12 @@ function ProblemPage({
             <span>内存 {problem.memory_limit} MB</span>
             <span>{{programming:"编程题",single:"单选题",multiple:"多选题",judge:"判断题",objective:"客观题"}[problem.question_type || "programming"]}</span>
           </div>
-          {problem.input_format === "已合并到完整题面" ? <Markdown>{problem.description}</Markdown> : <><h2>题目描述</h2><Markdown>{problem.description}</Markdown><h2>输入格式</h2><Markdown>{problem.input_format}</Markdown><h2>输出格式</h2><Markdown>{problem.output_format}</Markdown></>}
+          {integrityStatement ? (
+            <div className={masked ? "statement-mask" : undefined} aria-busy={masked}>
+              {problem.input_format === "已合并到完整题面" ? <Markdown>{integrityStatement.description}</Markdown> : <><h2>题目描述</h2><Markdown>{integrityStatement.description}</Markdown><h2>输入格式</h2><Markdown>{integrityStatement.input_format}</Markdown><h2>输出格式</h2><Markdown>{integrityStatement.output_format}</Markdown></>}
+              {masked && <div className="statement-cover" role="status"><EyeOff />窗口失去焦点，题面已隐藏。请回到本窗口继续答题，切换窗口或录屏不会显示题面。</div>}
+            </div>
+          ) : problem.input_format === "已合并到完整题面" ? <Markdown>{problem.description}</Markdown> : <><h2>题目描述</h2><Markdown>{problem.description}</Markdown><h2>输入格式</h2><Markdown>{problem.input_format}</Markdown><h2>输出格式</h2><Markdown>{problem.output_format}</Markdown></>}
           {problem.input_format !== "已合并到完整题面" && <div className="sample">
             <div>
               <b>输入</b>
@@ -1742,6 +2205,7 @@ function ProblemPage({
         </article>
         <aside className={problem.question_type && problem.question_type!=="programming" ? "submit-panel objective-panel" : "submit-panel"}>
           {problem.question_type && problem.question_type!=="programming" ? <><div className="editor-head"><b>选择答案</b><span>{problem.question_type==="objective"?`${problem.objective_items?.length||0} 道小题`:problem.question_type==="multiple"?"可多选":"请选择一项"}</span></div>{problem.question_type==="objective"?<div className="objective-answer-list">{(problem.objective_items||[]).map((item,index)=><section key={index}><strong>第 {index+1} 题 · {item.type==="single"?"单选":item.type==="multiple"?"多选":"判断"}</strong>{item.options.map((option,j)=><label key={j}><input type={item.type==="multiple"?"checkbox":"radio"} name={`objective-answer-${index}`} checked={(answer[index]||[]).includes(option)} onChange={e=>{const next=[...answer],current=next[index]||[];next[index]=item.type==="multiple"?(e.target.checked?[...current,option]:current.filter((x:string)=>x!==option)):[option];setAnswer(next)}}/><b>{String.fromCharCode(65+j)}</b><span>{option}</span></label>)}</section>)}</div>:<div className="objective-answer-list">{(problem.objective_options||[]).map((option,index)=><label key={index}><input type={problem.question_type==="multiple"?"checkbox":"radio"} name="objective-answer" checked={answer.includes(option)} onChange={(e)=>setAnswer(problem.question_type==="multiple"?(e.target.checked?[...answer,option]:answer.filter((x)=>x!==option)):[option])}/><b>{String.fromCharCode(65+index)}</b><span>{option}</span></label>)}</div>}<div className="editor-foot"><span>{problem.question_type==="objective"?`已作答 ${answer.filter(x=>x?.length).length}/${problem.objective_items?.length||0}`:`已选择 ${answer.length} 项`}</span><button className="primary" disabled={busy||blocked||!answer.length||(problem.question_type==="objective"&&answer.filter(x=>x?.length).length!==(problem.objective_items?.length||0))} onClick={submit}><Send/>{busy?"提交中...":user?"提交答案":"登录后提交"}</button></div></> : <>
+          {integrityActive && integrity && <div className="integrity-badge" role="status"><ShieldCheck />AI 作弊检测已开启{integrityBlocked ? ` · ${integrityBlocked}` : ""}{integrityNote ? ` · ${integrityNote}` : ""}</div>}
           <div className="editor-head">
             <select
               value={lang}
@@ -1772,6 +2236,16 @@ function ProblemPage({
             </button>
           </div>
           </>}
+          {integrityActive && integrity && (
+            <div className="integrity-run">
+              <button type="button" className="plain" onClick={() => {
+                const run = integrityAnswer || { runner: "stdin", prompt: problem.sample_output || "", answer: problem.sample_output || "", code_hash: "" };
+                // Presents the stored run for copying; it never replaces grading.
+                setIntegrityAnswer({ ...run, ban: integrity.ban_token || "" });
+              }}><Code2 />查看运行摘要</button>
+              {integrityAnswer && <pre className="integrity-run-out">{integrityAnswer.out || integrityAnswer.prompt}</pre>}
+            </div>
+          )}
           {result && (
             <div
               className={
@@ -1852,10 +2326,12 @@ function ContestsPage({
   const [items, setItems] = useState<any[]>([]);
   const [managing, setManaging] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+  const [showRanking, setShowRanking] = useState(false);
   const [oilState, setOilState] = useState<any>(null);
   const [oilProblems, setOilProblems] = useState<any[]>([]);
   const [oilChat, setOilChat] = useState<any[]>([]);
   const [oilMessage, setOilMessage] = useState("");
+  const [showHack, setShowHack] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const inviteToken = new URLSearchParams(location.search).get("team");
   const load = () =>
@@ -1923,6 +2399,7 @@ function ContestsPage({
   async function showContest(id: number) {
     try {
       setSelected(await api.contest(id));
+      setShowRanking(false);
       history.pushState({}, "", `/contests/${id}`);
     } catch (e: any) { error(e.message); }
   }
@@ -1955,19 +2432,20 @@ function ContestsPage({
         />
       ) : selected ? (
         <div className="contest-detail">
-          <button className="text-btn" onClick={() => { setSelected(null); history.pushState({}, "", "/contests"); }}>返回比赛列表</button>
+          <button className="text-btn" onClick={() => { setSelected(null); setShowRanking(false); history.pushState({}, "", "/contests"); }}>返回比赛列表</button>
           <div className="contest-detail-head">
             <div><span className="tag">{selected.type} · {status(selected)}</span><h2>{selected.title}</h2></div>
-            <div><Clock />{new Date(selected.starts_at).toLocaleString()} · {selected.duration} 分钟</div>
+            <div className="contest-detail-actions"><span><Clock />{new Date(selected.starts_at).toLocaleString()} · {selected.duration} 分钟</span><button type="button" className="plain" onClick={() => setShowRanking(!showRanking)}><Trophy />{showRanking ? "返回比赛" : "比赛排行榜"}</button></div>
           </div>
           <p>{selected.description || "暂无比赛说明"}</p>
+          {showRanking ? <ContestRanking contestId={selected.id} user={user} /> : <>
           {selected.type === "OIL" && (
             <section className="oil-rules">
               <h3>OIL 赛制</h3>
               <p>两队对抗，每队 {selected.team_size || 5} 人；做题阶段 {Math.round((selected.solving_duration || 7200) / 60)} 分钟，公开 Hack 阶段 {Math.round((selected.hack_duration || 3600) / 60)} 分钟。</p>
               <ul>
-                <li>比赛开始时只能看到自己的个人题，团队题隐藏且队内不能交流。</li>
-                <li>锁定个人题后不可修改提交，可与已锁定队友交流，解锁团队题并可 Hack 对手同位置个人题。</li>
+                <li>比赛开始后所有队员都能看到全部个人题、团队题和神秘题，锁题前队内不能交流。</li>
+                <li>锁定后不能再查看或提交个人题，可进入队内交流并 Hack 对手个人题。</li>
                 <li>个人题按子任务独立 Hack，成功后该子任务得分变为 40%，攻击方不得分。</li>
                 <li>公开 Hack 阶段仅可 Hack 团队思维题；需攻破对方全部正确做法，成功后对方失去 70% 分数且攻击方获得等量分数。</li>
                 <li>团队思维题每题 50 分且无部分分；神秘题 200 分，禁止 Hack。</li>
@@ -1991,7 +2469,7 @@ function ContestsPage({
                     ))}
                     {user?.id === oilState.captainId && <div className="oil-team-danger"><button className="plain danger" onClick={disbandTeam}><Trash2 />解散小队</button></div>}
                   </div>
-                  <p>这是你的个人题。锁定后才能查看团队题并进入队内讨论。</p>
+                  <p>这里显示本场比赛的全部题目。锁定后可进入队内讨论。</p>
                   <div className="contest-problems">
                     {oilProblems.length ? oilProblems.map((p) => (
                       <button key={p.id} onClick={() => { const problem = problems.find((x) => x.id === p.id); if (problem) openProblem(problem, selected.id); else api.problem(p.id).then((item) => openProblem(item, selected.id)).catch((e) => error(e.message)); }}>
@@ -2000,11 +2478,12 @@ function ContestsPage({
                       </button>
                     )) : <div className="empty">正在加载个人题...</div>}
                   </div>
-                  <button className="primary" onClick={() => api.oilLock(selected.id).then(() => refreshOil(selected.id)).catch((e) => error(e.message))}>锁定个人题并解锁团队题</button>
+                  <button className="primary" onClick={() => { if (!confirm("确定锁题吗？\n\n锁题后不能再查看或提交个人题，并将进入团队阶段和队内讨论。此操作无法撤销。")) return; api.oilLock(selected.id).then(() => refreshOil(selected.id)).catch((e) => error(e.message)); }}>锁题并进入团队阶段</button>
                 </>
               ) : (
                 <>
-                  <b>你已锁定个人题，队伍 {oilState.participant.team_no} · 位置 {oilState.participant.seat_no}</b>
+                  <div className="oil-locked-head"><b>你已锁定个人题，队伍 {oilState.participant.team_no} · 位置 {oilState.participant.seat_no}</b><button type="button" className="plain" onClick={() => setShowHack(!showHack)}><Flame />{showHack ? "关闭 Hack" : "Hack 对手"}</button></div>
+                  {showHack && <OilHackPanel contestId={selected.id} error={error} />}
                   <div className="contest-problems">
                     {oilProblems.map((p) => <button className={p.isMystery ? "mystery-problem" : undefined} key={p.id} onClick={() => { const problem = problems.find((x) => x.id === p.id); if (problem) openProblem(problem, selected.id); else api.problem(p.id).then((item) => openProblem(item, selected.id)).catch((e) => error(e.message)); }}><b>{p.isMystery ? "神秘" : p.isTeam ? "团队" : "个人"}</b><span>{p.id} {p.title}</span>{p.isMystery && <small>200 分 · 禁止 Hack</small>}</button>)}
                   </div>
@@ -2025,6 +2504,7 @@ function ContestsPage({
               return <button key={cp.id} onClick={() => problem && openProblem(problem, selected.id)}><b>{String.fromCharCode(65 + index)}</b><span>{cp.id} {cp.title}</span></button>;
             }) : <div className="empty">比赛暂未添加题目</div>}
           </div></>}
+          </>}
         </div>
       ) : (
         <div className="contest-list">
@@ -2050,6 +2530,30 @@ function ContestsPage({
       )}
     </section>
   );
+}
+function ContestRanking({ contestId, user }: { contestId: number; user: User | null }) {
+  const [problems, setProblems] = useState<Array<{id:string;title:string}>>([]);
+  const [rows, setRows] = useState<Array<{ rank: number; user_id?: number; username?: string; team_no?: number | null; members?: string[]; submissions: number; solved: number; score: number; last_submit_at: string | null }>>([]);
+  const [error, setError] = useState("");
+  const load = () => api.contestRanking(contestId).then((data) => { setProblems(data.problems || []); setRows(data.rows || []); }).catch((cause: Error) => setError(cause.message));
+  useEffect(() => {
+    let stopped = false;
+    const refresh = () => api.contestRanking(contestId).then((data) => { if (!stopped) { setProblems(data.problems || []); setRows(data.rows || []); } }).catch((cause: Error) => { if (!stopped) setError(cause.message); });
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [contestId]);
+  const admin=user?.role === "admin" || user?.role === "root";
+  async function edit(row:any, problem:any) { const current=row.problem_results?.[problem.id]?.score ?? 0, value=prompt(`修改 ${row.team_no ? `队伍 ${row.team_no}` : row.username} 的 ${problem.id} 得分`,String(current)); if(value===null)return; const score=Number(value); if(!Number.isInteger(score)||score<0)return setError("请输入非负整数分数"); try { await api.updateContestRankingScore(contestId,Number(row.team_no ?? row.user_id),problem.id,score); await load(); } catch(cause:any){setError(cause.message);} }
+  const columns=`70px minmax(150px,1fr) repeat(${problems.length},minmax(76px,1fr)) 70px 70px 70px`;
+  return <section className="contest-ranking"><div className="section-heading"><div><span className="kicker">LIVE RANKING</span><h3>比赛排行榜</h3></div><span>{admin ? "点击题目分数可修改 · " : ""}每 5 秒更新</span></div>{error && <div className="ranking-error">{error}</div>}{rows.length ? <div className="contest-ranking-table"><div className="contest-ranking-row contest-ranking-head" style={{gridTemplateColumns:columns}}><span>排名</span><span>队伍 / 选手</span>{problems.map((problem,index)=><span title={problem.title} key={problem.id}>{String.fromCharCode(65+index)}<small>{problem.id}</small></span>)}<span>通过</span><span>得分</span><span>提交</span></div>{rows.map((row:any) => <div className="contest-ranking-row" style={{gridTemplateColumns:columns}} key={row.team_no ?? row.user_id}><b>#{row.rank}</b><span>{row.team_no ? <><b>队伍 {row.team_no}</b><small>{row.members?.join(" · ")}</small></> : row.username}</span>{problems.map((problem)=><button type="button" disabled={!admin} className={`problem-result ${row.problem_results?.[problem.id]?.accepted ? "accepted" : row.problem_results?.[problem.id] ? "attempted" : ""}`} onClick={()=>admin&&edit(row,problem)} title={admin?`点击修改 ${problem.id} 分数`:problem.title} key={problem.id}><b>{row.problem_results?.[problem.id]?.score ?? "-"}</b><small>{row.problem_results?.[problem.id]?.accepted ? "通过" : row.problem_results?.[problem.id] ? "未通过" : "未提交"}</small></button>)}<b>{row.solved}</b><b>{row.score}</b><span>{row.submissions}</span></div>)}</div> : <div className="empty">暂无本场比赛提交记录。</div>}</section>;
+}
+function OilHackPanel({ contestId, error }: { contestId: number; error: (message: string) => void }) {
+  const [phase, setPhase] = useState(""), [targets, setTargets] = useState<any[]>([]), [selected, setSelected] = useState<any>(null), [input, setInput] = useState(""), [busy, setBusy] = useState(false);
+  const load = () => api.oilHackTargets(contestId).then((value) => { setPhase(value.phase); setTargets(value.targets || []); if (selected) setSelected((value.targets || []).find((item: any) => item.id === selected.id) || null); }).catch((cause) => error(cause.message));
+  useEffect(() => { void load(); }, [contestId]);
+  const submit = async () => { if (!selected || !input.trim()) return error("请选择提交并输入 Hack 数据"); setBusy(true); try { const result = await api.submitOilHack(contestId, selected.id, input); error(`Hack #${result.id} 已提交，等待判定`); setInput(""); } catch (cause: any) { error(cause.message); } finally { setBusy(false); } };
+  return <section className="oil-hack-panel"><div className="section-heading"><div><span className="kicker">{phase === "hacking" ? "PUBLIC HACK" : "PERSONAL HACK"}</span><h3>Hack 目标</h3></div><span>未通过提交也可选择</span></div>{targets.length ? <div className="oil-hack-layout"><div className="oil-hack-targets">{targets.map((target) => <button type="button" className={selected?.id === target.id ? "active" : ""} onClick={() => setSelected(target)} key={target.id}><b>#{target.id} · {target.username}</b><span>{target.problem_id} · {target.status} · {target.score} 分</span></button>)}</div>{selected && <div className="oil-hack-workspace"><div className="oil-hack-meta"><b>{selected.problem_id} · {selected.username}</b><span>{selected.language} · {selected.status}</span></div><pre><code>{selected.source}</code></pre><label>Hack 输入<textarea rows={8} value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入能使目标程序失败的数据" /></label><button type="button" className="primary" disabled={busy || !input.trim()} onClick={submit}><Flame />{busy ? "提交中..." : "提交 Hack"}</button></div>}</div> : <div className="empty">当前阶段没有可 Hack 的对手提交。</div>}</section>;
 }
 function RecordsPage() {
   return (
@@ -2329,4 +2833,23 @@ function DiscussPage({
     </section>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+async function boot() {
+  if (oauthCode && !oauthError) {
+    try {
+      const response = await fetch("/api/auth/auth0/complete", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: oauthCode }), signal: AbortSignal.timeout(15_000),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.token) throw new Error(result.error || "登录状态无效，请重新登录");
+      localStorage.setItem("ij-token", result.token);
+      sessionStorage.removeItem("ij-admin-verification");
+      sessionStorage.removeItem("ij-admin-verification-expires");
+    } catch (error: any) { oauthError = error.message || "无法完成登录，请重试"; }
+  }
+  createRoot(document.getElementById("root")!).render(<App />);
+}
+// The iOS "信" shell loads the same bundle at #chat and gets the reduced client.
+const root = document.getElementById("root")!;
+if (location.hash.startsWith("#chat")) startChatApp(root);
+else void boot();

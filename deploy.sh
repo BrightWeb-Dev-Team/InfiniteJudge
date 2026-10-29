@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/runtime"
 DATA_DIR="$ROOT_DIR/data"
-PORT="${PORT:-3001}"
+PORT="${PORT:-4001}"
 
 case "$(uname -s)" in
   Darwin|Linux) ;;
@@ -24,7 +24,7 @@ if [ -f "$RUNTIME_DIR/infinitejudge.pid" ] && kill -0 "$(cat "$RUNTIME_DIR/infin
   kill "$(cat "$RUNTIME_DIR/infinitejudge.pid")"
   sleep 1
 fi
-NODE_ENV=production PORT="$PORT" DB_PATH="$DATA_DIR/infinte.db" nohup node server/index.js >>"$RUNTIME_DIR/infinitejudge.log" 2>&1 &
+NODE_ENV=production PORT="$PORT" DB_PATH="$DATA_DIR/infinte.db" IJ_LICENSE_KEY="${IJ_LICENSE_KEY:-}" IJ_LICENSE_SERVER_URL="${IJ_LICENSE_SERVER_URL:-https://key.brightweb.top}" nohup node server/index.js >>"$RUNTIME_DIR/infinitejudge.log" 2>&1 &
 echo $! > "$RUNTIME_DIR/infinitejudge.pid"
 sleep 1
 if ! kill -0 "$(cat "$RUNTIME_DIR/infinitejudge.pid")" 2>/dev/null; then
@@ -33,5 +33,6 @@ if ! kill -0 "$(cat "$RUNTIME_DIR/infinitejudge.pid")" 2>/dev/null; then
 fi
 
 echo "Infinite Judge 已启动：http://localhost:$PORT"
+echo "官方授权服务地址：https://key.brightweb.top"
 echo "首次访问会显示安装向导；邮件验证默认关闭，可直接完成安装。"
 echo "日志：$RUNTIME_DIR/infinitejudge.log"

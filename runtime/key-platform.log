@@ -1,0 +1,256 @@
+InfiniteJudge Key Platform: http://localhost:5031
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/key-platform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/key-admin.html'
+InfiniteJudge Key Platform: http://localhost:5031
+InfiniteJudge Key Platform: http://localhost:5031
+InfiniteJudge Key Platform: http://localhost:5031
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+InfiniteJudge Key Platform: http://localhost:5031
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+TypeError: db.transaction is not a function
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/keys.js:65:20
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:38:9
+    at auth (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:29:3)
+    at admin (file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/server/auth.js:36:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5)
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+InfiniteJudge Key Platform: http://localhost:5031
+InfiniteJudge Key Platform: http://localhost:5031
+InfiniteJudge Key Platform: http://localhost:5031
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+InfiniteJudge Key Platform: http://localhost:5031
+InfiniteJudge Key Platform: http://localhost:5031
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use :::5031
+    at Server.setupListenHandle [as _listen2] (node:net:2328:16)
+    at listenInCluster (node:net:2437:12)
+    at Server.listen (node:net:2562:7)
+    at app.listen (/Users/damaoleopard/Downloads/InfiniteJudge/node_modules/express/lib/application.js:635:24)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge/keyplatform/server.js:23:5
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2416:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5031
+}
+
+Node.js v24.21.0

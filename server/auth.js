@@ -20,10 +20,24 @@ export function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: "请先登录" });
   const user = db
     .prepare(
-      "SELECT users.id,username,role,avatar,rp,bio FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires_at>?",
+      "SELECT users.id,username,role,avatar,rp,bio,custom_css,custom_html,custom_head,custom_script,banned_until,ban_reason FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires_at>?",
     )
     .get(token, Date.now());
   if (!user) return res.status(401).json({ error: "登录已过期" });
+  if (user.banned_until > Date.now()) {
+    const reason = user.ban_reason || "违反社区规则";
+    const now = Date.now();
+    const remaining = user.banned_until - now;
+    const days = Math.ceil(remaining / (24 * 60 * 60 * 1000));
+    const durationText = days > 365 ? "永久" : `${days} 天`;
+    return res.status(403).json({
+      error: `您的账号因「${reason}」已被封禁 ${durationText}`,
+      banned: true,
+      banned_until: user.banned_until,
+      ban_reason: reason,
+      remaining_days: days,
+    });
+  }
   req.user = user;
   presence.set(user.id, Date.now());
   next();

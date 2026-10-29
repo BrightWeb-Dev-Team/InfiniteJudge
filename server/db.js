@@ -6,6 +6,17 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dbPath = process.env.DB_PATH || resolve(root, "data/infinte.db");
 mkdirSync(dirname(dbPath), { recursive: true });
 export const db = new DatabaseSync(dbPath);
+export const DEFAULT_AI_SETTINGS = Object.freeze({
+  enabled: false,
+  provider: "openai-compatible",
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: "",
+  model: "gpt-4o-mini",
+  systemPrompt: "",
+  temperature: 0.7,
+  maxTokens: 1024,
+  timeoutMs: 30000,
+});
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'user',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS user_tags(id INTEGER PRIMARY KEY AUTOINCREMENT,label TEXT NOT NULL,color TEXT NOT NULL DEFAULT '#b08c00',scope TEXT NOT NULL DEFAULT 'personal');
@@ -23,6 +34,7 @@ CREATE TABLE IF NOT EXISTS contest_participants(contest_id INTEGER NOT NULL REFE
 CREATE TABLE IF NOT EXISTS contest_team_invites(token TEXT PRIMARY KEY,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,team_no INTEGER NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(contest_id,team_no));
 CREATE TABLE IF NOT EXISTS contest_hacks(id INTEGER PRIMARY KEY AUTOINCREMENT,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,attacker_id INTEGER NOT NULL REFERENCES users(id),target_user_id INTEGER REFERENCES users(id),problem_id TEXT NOT NULL REFERENCES problems(id),subtask TEXT NOT NULL DEFAULT '',phase TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',score_stolen INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,resolved_at TEXT);
 CREATE TABLE IF NOT EXISTS contest_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id),content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS contest_score_overrides(contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,subject_type TEXT NOT NULL,subject_id INTEGER NOT NULL,problem_id TEXT NOT NULL REFERENCES problems(id),score INTEGER NOT NULL,updated_by INTEGER NOT NULL REFERENCES users(id),updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(contest_id,subject_type,subject_id,problem_id));
 CREATE TABLE IF NOT EXISTS learning_collections(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL CHECK(kind IN ('training','homework')),title TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',starts_at TEXT,ends_at TEXT,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS learning_problems(collection_id INTEGER NOT NULL REFERENCES learning_collections(id) ON DELETE CASCADE,problem_id TEXT NOT NULL REFERENCES problems(id),position INTEGER NOT NULL,PRIMARY KEY(collection_id,problem_id));
 CREATE TABLE IF NOT EXISTS discussions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),title TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -30,8 +42,22 @@ CREATE TABLE IF NOT EXISTS discussion_replies(id INTEGER PRIMARY KEY AUTOINCREME
 CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),problem_id TEXT NOT NULL REFERENCES problems(id),language TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Pending',score INTEGER NOT NULL DEFAULT 0,time_ms INTEGER,memory_kb INTEGER,detail TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS plugin_data(plugin TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(plugin,key));
 CREATE TABLE IF NOT EXISTS system_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS sponsor_key_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,reference TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','issued','rejected')),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT);
+CREATE INDEX IF NOT EXISTS sponsor_key_requests_status_idx ON sponsor_key_requests(status,created_at DESC);
+CREATE TABLE IF NOT EXISTS issued_keys(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,key_hash TEXT NOT NULL UNIQUE,key_suffix TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,revoked_at TEXT);
+CREATE INDEX IF NOT EXISTS issued_keys_user_idx ON issued_keys(user_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS key_platform_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS license_orders(id INTEGER PRIMARY KEY AUTOINCREMENT,customer TEXT NOT NULL,contact TEXT NOT NULL,site_url TEXT NOT NULL,amount_fen INTEGER NOT NULL,payment_ref TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','issued','rejected')),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT);
+CREATE INDEX IF NOT EXISTS license_orders_status_idx ON license_orders(status,created_at DESC);
+CREATE TABLE IF NOT EXISTS license_keys(id INTEGER PRIMARY KEY AUTOINCREMENT,customer TEXT NOT NULL,contact TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,key_suffix TEXT NOT NULL,tier TEXT NOT NULL CHECK(tier IN ('community','professional')),site_url TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at TEXT,bound_at TEXT,issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL);
+CREATE INDEX IF NOT EXISTS license_keys_hash_idx ON license_keys(key_hash);
+CREATE INDEX IF NOT EXISTS license_keys_site_idx ON license_keys(site_url,status);
+CREATE TABLE IF NOT EXISTS ai_conversations(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,title TEXT NOT NULL DEFAULT '新对话',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS ai_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id INTEGER NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,role TEXT NOT NULL CHECK(role IN ('user','assistant')),content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ai_conversations_user_updated_idx ON ai_conversations(user_id,updated_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS ai_messages_conversation_idx ON ai_messages(conversation_id,id);
 CREATE TABLE IF NOT EXISTS countdowns(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,target TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS email_codes(email TEXT PRIMARY KEY,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,last_sent_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS email_codes(email TEXT PRIMARY KEY,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,last_sent_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id),recipient_id INTEGER NOT NULL REFERENCES users(id),content TEXT NOT NULL,read_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS call_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,call_id TEXT NOT NULL,type TEXT NOT NULL,payload TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS call_signals_recipient_idx ON call_signals(recipient_id,id);
@@ -42,10 +68,22 @@ CREATE TABLE IF NOT EXISTS domain_members(domain_id INTEGER NOT NULL REFERENCES 
 CREATE TABLE IF NOT EXISTS domain_applications(id INTEGER PRIMARY KEY AUTOINCREMENT,domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,message TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(domain_id,user_id));
 CREATE INDEX IF NOT EXISTS submission_created ON submissions(created_at DESC);`);
 try { db.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
+try { db.exec("ALTER TABLE email_codes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL AND email <> ''"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN rp INTEGER NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN custom_css TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN custom_html TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN custom_head TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN custom_script TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE domains ADD COLUMN carousel TEXT NOT NULL DEFAULT '[]'"); } catch {}
+try { db.exec("ALTER TABLE domains ADD COLUMN carousel_interval INTEGER NOT NULL DEFAULT 5"); } catch {}
+try { db.exec("ALTER TABLE submissions ADD COLUMN contest_id INTEGER REFERENCES contests(id) ON DELETE SET NULL"); } catch {}
+try { db.exec("ALTER TABLE contest_hacks ADD COLUMN target_submission_id INTEGER REFERENCES submissions(id) ON DELETE SET NULL"); } catch {}
+try { db.exec("ALTER TABLE contest_hacks ADD COLUMN input TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("CREATE INDEX IF NOT EXISTS submissions_contest_idx ON submissions(contest_id,user_id,problem_id,id)"); } catch {}
+try { db.exec("CREATE TABLE IF NOT EXISTS contest_score_overrides(contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,subject_type TEXT NOT NULL,subject_id INTEGER NOT NULL,problem_id TEXT NOT NULL REFERENCES problems(id),score INTEGER NOT NULL,updated_by INTEGER NOT NULL REFERENCES users(id),updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(contest_id,subject_type,subject_id,problem_id))"); } catch {}
 try { db.exec("ALTER TABLE certifications ADD COLUMN display_text TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.prepare("UPDATE certifications SET title='个人认证' WHERE title='大V个人认证'").run(); } catch {}
 try { db.prepare("UPDATE certifications SET status='approved',reviewed_at=CURRENT_TIMESTAMP WHERE status='pending' AND user_id IN (SELECT id FROM users WHERE role IN ('admin','root'))").run(); } catch {}
@@ -74,14 +112,91 @@ for (const sql of [
   "ALTER TABLE problems ADD COLUMN objective_answer TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE problems ADD COLUMN domain_id INTEGER REFERENCES domains(id)",
   "ALTER TABLE problems ADD COLUMN objective_items TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE problems ADD COLUMN integrity_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE problems ADD COLUMN integrity_summary_limit INTEGER NOT NULL DEFAULT 4000",
+  "ALTER TABLE problems ADD COLUMN creator_id INTEGER",
 ]) { try { db.exec(sql); } catch {} }
+// Domain ownership of the content that permission checks depend on.
+for (const sql of [
+  "ALTER TABLE contests ADD COLUMN creator_id INTEGER",
+  "ALTER TABLE learning_collections ADD COLUMN domain_id INTEGER",
+  "ALTER TABLE discussions ADD COLUMN domain_id INTEGER",
+]) { try { db.exec(sql); } catch {} }
+try {
+  const mainDomain = db.prepare("SELECT id FROM domains ORDER BY id LIMIT 1").get();
+  if (mainDomain) {
+    db.prepare("UPDATE learning_collections SET domain_id=? WHERE domain_id IS NULL").run(mainDomain.id);
+    db.prepare("UPDATE discussions SET domain_id=? WHERE domain_id IS NULL").run(mainDomain.id);
+  }
+} catch {}
+db.exec(`CREATE TABLE IF NOT EXISTS problem_sessions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  problem_id TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'cpp',
+  watermark TEXT NOT NULL DEFAULT '',
+  baseline TEXT NOT NULL DEFAULT '',
+  baseline_hash TEXT NOT NULL DEFAULT '',
+  fingerprint_token TEXT NOT NULL DEFAULT '',
+  blank_lines TEXT NOT NULL DEFAULT '[]',
+  violations TEXT NOT NULL DEFAULT '[]',
+  score REAL NOT NULL DEFAULT 0,
+  verdict TEXT NOT NULL DEFAULT '',
+  verdict_summary TEXT NOT NULL DEFAULT '[]',
+  pasted_chars INTEGER NOT NULL DEFAULT 0,
+  run_json TEXT NOT NULL DEFAULT '',
+  source_snapshot TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_activity_at INTEGER NOT NULL DEFAULT 0,
+  ended_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS problem_sessions_open ON problem_sessions(user_id,problem_id) WHERE ended_at IS NULL;`)
 try { const main=db.prepare("SELECT id FROM domains ORDER BY id LIMIT 1").get(); if(main) db.prepare("UPDATE problems SET domain_id=? WHERE domain_id IS NULL").run(main.id); } catch {}
+db.exec(`CREATE TABLE IF NOT EXISTS friendships(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  addressee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(requester_id,addressee_id)
+);
+CREATE INDEX IF NOT EXISTS friendships_requester_idx ON friendships(requester_id,status);
+CREATE INDEX IF NOT EXISTS friendships_addressee_idx ON friendships(addressee_id,status);
+CREATE TABLE IF NOT EXISTS moments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL DEFAULT '',
+  images TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS moments_user_idx ON moments(user_id,id DESC);
+CREATE INDEX IF NOT EXISTS moments_created_idx ON moments(id DESC);
+CREATE TABLE IF NOT EXISTS moment_likes(
+  moment_id INTEGER NOT NULL REFERENCES moments(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(moment_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS moment_comments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  moment_id INTEGER NOT NULL REFERENCES moments(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS moment_comments_moment_idx ON moment_comments(moment_id,id);`);
 db.exec("CREATE TABLE IF NOT EXISTS problem_focus_events(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,problem_id TEXT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,count INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,problem_id))");
 try { db.exec("ALTER TABLE problem_focus_events ADD COLUMN last_event_at INTEGER NOT NULL DEFAULT 0"); } catch {}
 try { db.prepare("UPDATE problem_focus_events SET last_event_at=? WHERE count>0 AND last_event_at=0").run(Date.now()); } catch {}
 try { db.exec("ALTER TABLE user_tags ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'"); } catch {}
 try { db.prepare("DELETE FROM user_tag_links WHERE tag_id=-1").run(); db.prepare("DELETE FROM user_tags WHERE id=-1").run(); } catch {}
 try { const firstAdmin = db.prepare("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").get(); if (firstAdmin && !db.prepare("SELECT 1 FROM users WHERE role='root'").get()) db.prepare("UPDATE users SET role='root' WHERE id=?").run(firstAdmin.id); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN banned_until INTEGER NOT NULL DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN ban_reason TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN banned_by INTEGER REFERENCES users(id) ON DELETE SET NULL"); } catch {}
+try { db.exec("ALTER TABLE users ADD COLUMN banned_at TEXT NOT NULL DEFAULT ''"); } catch {}
 const seedProblems = [
   [
     "IJ1001",
@@ -253,8 +368,26 @@ db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES(?,?)").run(
     languages: "C++\nC\nPython\nJava\nRust",
     about: "# 关于 {{ name }}\n\n致力于提供安全、完善、开放的在线评测服务。",
     session: { savedExpireSeconds: 2592000, unsavedExpireSeconds: 10800 },
+    ai: { ...DEFAULT_AI_SETTINGS },
+    integrity: { autoZeroViolations: true, autoZeroThreshold: 0.72 },
   }),
 );
+// Add newly introduced AI defaults to existing installations without
+// overwriting values that an administrator has already configured.
+try {
+  const row = db.prepare("SELECT value FROM system_settings WHERE key='advanced'").get();
+  const current = row ? JSON.parse(row.value) : {};
+  if (!current.ai || typeof current.ai !== "object" || Array.isArray(current.ai)) {
+    db.prepare("UPDATE system_settings SET value=?,updated_at=CURRENT_TIMESTAMP WHERE key='advanced'")
+      .run(JSON.stringify({ ...current, ai: { ...DEFAULT_AI_SETTINGS } }));
+  } else {
+    const ai = { ...DEFAULT_AI_SETTINGS, ...current.ai };
+    if (JSON.stringify(ai) !== JSON.stringify(current.ai)) {
+      db.prepare("UPDATE system_settings SET value=?,updated_at=CURRENT_TIMESTAMP WHERE key='advanced'")
+        .run(JSON.stringify({ ...current, ai }));
+    }
+  }
+} catch {}
 if (db.prepare("SELECT 1 FROM users WHERE role='admin' LIMIT 1").get())
   db.prepare("INSERT OR IGNORE INTO system_settings(key,value) VALUES('installed','true')").run();
 const existingAdmin = db.prepare("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").get();

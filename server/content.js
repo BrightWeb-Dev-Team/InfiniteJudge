@@ -67,27 +67,43 @@ function problemBody(body) {
     testcases: JSON.stringify(testcases),
     anti_cheat_enabled: body.anti_cheat_enabled === true || body.anti_cheat_enabled === 1 || body.anti_cheat_enabled === "1" ? 1 : 0,
     anti_cheat_limit: Math.max(1, Math.min(100, Number(body.anti_cheat_limit) || 3)),
+    integrity_enabled: body.integrity_enabled === true || body.integrity_enabled === 1 || body.integrity_enabled === "1" ? 1 : 0,
+    integrity_summary_limit: Math.max(200, Math.min(20000, Number(body.integrity_summary_limit) || 4000)),
     hidden: body.hidden === true || body.hidden === 1 || body.hidden === "1" ? 1 : 0,
     spj_enabled, spj_source,
     question_type,objective_options:JSON.stringify(objective_options),objective_answer:JSON.stringify(objective_answer),objective_items:JSON.stringify(objective_items),
   };
 }
 async function validateSpj(p) { if (!p.spj_enabled) return; const dir=await mkdtemp(join(tmpdir(),"ij-spj-check-")); try { await writeFile(join(dir,"SpecialJudge.cpp"),p.spj_source); const result=await runSandbox({command:"g++",args:["SpecialJudge.cpp","-O2","-std=c++20","-o","SpecialJudge"],cwd:dir,timeout:30000,sandbox:false}); if(result.code) throw new Error(`Special Judge 编译失败：${(result.err||result.out).slice(0,3000)}`); } finally { await rm(dir,{recursive:true,force:true}); } }
-export function mountContent(app, db, publicProblem) {
-  app.get("/api/admin/problems/:id", admin, (req, res) => {
+export function mountContent(app, db, publicProblem, domainPerms) {
+  const domainPermission = domainPerms.domainPermission;
+  // The broad permission wins; otherwise the owner-only variant applies when
+  // the viewer created the row.
+  const canEdit = (permission, ownPermission, ownerId) => (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: "请先登录" });
+    if (req.user.role === "root") return next();
+    const perms = domainPerms.permissionsFor(req.user, req.domain.id).perms;
+    const owns = Number(ownerId(req)) === Number(req.user.id);
+    if (!perms[permission] && !(owns && perms[ownPermission])) return res.status(403).json({ error: "当前域没有该权限", permission });
+    next();
+  };
+  const problemDomain = (req) => db.prepare("SELECT domain_id FROM problems WHERE id=?").get(req.params.id)?.domain_id;
+  app.get("/api/admin/problems/:id", auth, domainPermission("view_problem", problemDomain), (req, res) => {
     const p = db
       .prepare("SELECT * FROM problems WHERE id=?")
       .get(req.params.id);
     if (!p) return res.status(404).json({ error: "题目不存在" });
     res.json({ ...publicProblem(p, true), testcases: JSON.parse(p.testcases), spj_source: p.spj_source || "", objective_answer: JSON.parse(p.objective_answer || "[]"), objective_items: JSON.parse(p.objective_items || "[]") });
   });
-  app.post("/api/admin/problems", admin, async (req, res) => {
+  app.post("/api/admin/problems", auth, domainPermission("create_problem"), async (req, res) => {
     try {
       const p = problemBody(req.body);
-      p.domain_id=Number(req.headers["x-domain-id"])||db.prepare("SELECT id FROM domains ORDER BY id LIMIT 1").get()?.id;
+      // The domain that granted create_problem, never a header the client controls.
+      p.domain_id=req.domain.id;
+      p.creator_id=req.user.id;
       await validateSpj(p);
       db.prepare(
-        `INSERT INTO problems(id,title,difficulty,tags,time_limit,memory_limit,description,input_format,output_format,sample_input,sample_output,testcases,anti_cheat_enabled,anti_cheat_limit,hidden,spj_enabled,spj_source,question_type,objective_options,objective_answer,objective_items,domain_id) VALUES(@id,@title,@difficulty,@tags,@time_limit,@memory_limit,@description,@input_format,@output_format,@sample_input,@sample_output,@testcases,@anti_cheat_enabled,@anti_cheat_limit,@hidden,@spj_enabled,@spj_source,@question_type,@objective_options,@objective_answer,@objective_items,@domain_id)`,
+        `INSERT INTO problems(id,title,difficulty,tags,time_limit,memory_limit,description,input_format,output_format,sample_input,sample_output,testcases,anti_cheat_enabled,anti_cheat_limit,integrity_enabled,integrity_summary_limit,hidden,spj_enabled,spj_source,question_type,objective_options,objective_answer,objective_items,domain_id,creator_id) VALUES(@id,@title,@difficulty,@tags,@time_limit,@memory_limit,@description,@input_format,@output_format,@sample_input,@sample_output,@testcases,@anti_cheat_enabled,@anti_cheat_limit,@integrity_enabled,@integrity_summary_limit,@hidden,@spj_enabled,@spj_source,@question_type,@objective_options,@objective_answer,@objective_items,@domain_id,@creator_id)`,
       ).run(p);
       res
         .status(201)
@@ -103,13 +119,13 @@ export function mountContent(app, db, publicProblem) {
         .json({ error: e.message });
     }
   });
-  app.put("/api/admin/problems/:id", admin, async (req, res) => {
+  app.put("/api/admin/problems/:id", auth, domainPermission("view_problem", problemDomain), canEdit("edit_problem", "edit_own_problem", (req) => db.prepare("SELECT creator_id FROM problems WHERE id=?").get(req.params.id)?.creator_id), async (req, res) => {
     try {
       const p = problemBody({ ...req.body, id: req.params.id });
       await validateSpj(p);
       const r = db
         .prepare(
-          `UPDATE problems SET title=@title,difficulty=@difficulty,tags=@tags,time_limit=@time_limit,memory_limit=@memory_limit,description=@description,input_format=@input_format,output_format=@output_format,sample_input=@sample_input,sample_output=@sample_output,testcases=@testcases,anti_cheat_enabled=@anti_cheat_enabled,anti_cheat_limit=@anti_cheat_limit,hidden=@hidden,spj_enabled=@spj_enabled,spj_source=@spj_source,question_type=@question_type,objective_options=@objective_options,objective_answer=@objective_answer,objective_items=@objective_items WHERE id=@id`,
+          `UPDATE problems SET title=@title,difficulty=@difficulty,tags=@tags,time_limit=@time_limit,memory_limit=@memory_limit,description=@description,input_format=@input_format,output_format=@output_format,sample_input=@sample_input,sample_output=@sample_output,testcases=@testcases,anti_cheat_enabled=@anti_cheat_enabled,anti_cheat_limit=@anti_cheat_limit,integrity_enabled=@integrity_enabled,integrity_summary_limit=@integrity_summary_limit,hidden=@hidden,spj_enabled=@spj_enabled,spj_source=@spj_source,question_type=@question_type,objective_options=@objective_options,objective_answer=@objective_answer,objective_items=@objective_items WHERE id=@id`,
         )
         .run(p);
       if (!r.changes) return res.status(404).json({ error: "题目不存在" });
@@ -123,7 +139,7 @@ export function mountContent(app, db, publicProblem) {
       res.status(400).json({ error: e.message });
     }
   });
-  app.put("/api/admin/problems/:id/testcases", admin, async (req, res) => {
+  app.put("/api/admin/problems/:id/testcases", auth, domainPermission("view_problem", problemDomain), canEdit("edit_problem", "edit_own_problem", (req) => db.prepare("SELECT creator_id FROM problems WHERE id=?").get(req.params.id)?.creator_id), async (req, res) => {
     try {
       const current = db.prepare("SELECT question_type FROM problems WHERE id=?").get(req.params.id);
       if (!current) return res.status(404).json({ error: "题目不存在" });
@@ -143,17 +159,16 @@ export function mountContent(app, db, publicProblem) {
       res.status(400).json({ error: e.message });
     }
   });
-  app.delete("/api/admin/problems/:id", admin, (req, res) => {
+  app.delete("/api/admin/problems/:id", auth, domainPermission("view_problem", problemDomain), canEdit("edit_problem", "edit_own_problem", (req) => db.prepare("SELECT creator_id FROM problems WHERE id=?").get(req.params.id)?.creator_id), (req, res) => {
     const ids=[req.params.id], marks="?"; let changes=0; db.exec("BEGIN"); try { for(const table of ["submissions","problem_focus_events","contest_problems","contest_hacks","learning_problems"]) db.prepare(`DELETE FROM ${table} WHERE problem_id IN (${marks})`).run(...ids); changes=db.prepare(`DELETE FROM problems WHERE id IN (${marks})`).run(...ids).changes; db.exec("COMMIT"); } catch(e){db.exec("ROLLBACK"); return res.status(400).json({error:e.message});} res.status(changes ? 204 : 404).end();
   });
-  app.post("/api/admin/problems/batch-delete", admin, (req,res)=>{ const ids=[...new Set((Array.isArray(req.body.ids)?req.body.ids:[]).map(String).filter((id)=>/^[A-Za-z0-9_-]{1,24}$/.test(id)))].slice(0,500); if(!ids.length)return res.status(400).json({error:"请选择要删除的题目"}); const marks=ids.map(()=>"?").join(","); let deleted=0; db.exec("BEGIN"); try { for(const table of ["submissions","problem_focus_events","contest_problems","contest_hacks","learning_problems"]) db.prepare(`DELETE FROM ${table} WHERE problem_id IN (${marks})`).run(...ids); deleted=db.prepare(`DELETE FROM problems WHERE id IN (${marks})`).run(...ids).changes; db.exec("COMMIT"); } catch(e){db.exec("ROLLBACK"); return res.status(400).json({error:e.message});} res.json({deleted}); });
-  app.post("/api/admin/problems/append-ai-policy", admin, (req, res) => {
+  app.post("/api/admin/problems/batch-delete", auth, domainPermission("edit_problem"), (req,res)=>{ const ids=[...new Set((Array.isArray(req.body.ids)?req.body.ids:[]).map(String).filter((id)=>/^[A-Za-z0-9_-]{1,24}$/.test(id)))].slice(0,500); if(!ids.length)return res.status(400).json({error:"请选择要删除的题目"}); const marks=ids.map(()=>"?").join(","); let deleted=0; db.exec("BEGIN"); try { for(const table of ["submissions","problem_focus_events","contest_problems","contest_hacks","learning_problems"]) db.prepare(`DELETE FROM ${table} WHERE problem_id IN (${marks})`).run(...ids); deleted=db.prepare(`DELETE FROM problems WHERE id IN (${marks})`).run(...ids).changes; db.exec("COMMIT"); } catch(e){db.exec("ROLLBACK"); return res.status(400).json({error:e.message});} res.json({deleted}); });
+  app.post("/api/admin/problems/append-ai-policy", auth, domainPermission("edit_problem"), (req, res) => {
     const marker = "## AI 使用规则";
     const policy = `${marker}\n\n本比赛禁止使用生成式 AI 辅助完成题目。系统会结合代码相似度、提交行为和代码风格变化进行风险筛查；筛查结果仅用于人工复核，不会自动判罚，参赛者可以提交申诉。`;
-    const domainId = Number(req.headers["x-domain-id"]);
-    const where = domainId ? "domain_id=? AND instr(description,?)=0" : "instr(description,?)=0";
-    const args = domainId ? [domainId, marker] : [marker];
-    const result = db.prepare(`UPDATE problems SET description=rtrim(description) || '\n\n---\n\n' || ? WHERE ${where}`).run(policy, ...args);
+    // Scoped to the domain that granted edit_problem; omitting the header must never
+    // rewrite every domain's problems.
+    const result = db.prepare("UPDATE problems SET description=rtrim(description) || '\n\n---\n\n' || ? WHERE domain_id=? AND instr(description,?)=0").run(policy, req.domain.id, marker);
     res.json({ updated: result.changes, policy });
   });
   app.get("/api/contests/:id", (req, res) => {
@@ -165,14 +180,14 @@ export function mountContent(app, db, publicProblem) {
       .prepare(
         "SELECT p.id,p.title,cp.position FROM contest_problems cp JOIN problems p ON p.id=cp.problem_id WHERE cp.contest_id=? ORDER BY cp.position",
       )
-      .all(req.params.id).map((p) => { let kinds = {}; try { kinds = JSON.parse(c.problem_kinds || "{}"); } catch {} return { ...p, kind: kinds[p.id] || "personal" }; });
+      .all(req.params.id).map((p) => { let kinds = {}; try { kinds = JSON.parse(c.problem_kinds || "{}"); } catch {} const personalCount=Number(c.personal_problem_count)||Number(c.team_size)||5; return { ...p, kind: kinds[p.id] || (Number(p.position)<personalCount ? "personal" : "team") }; });
     try {
       const teams = JSON.parse(c.team_assignments || "[]");
       c.team_assignments_text = teams.map((team) => team.map((id) => db.prepare("SELECT username FROM users WHERE id=?").get(id)?.username).filter(Boolean).join(", ")).join("\n");
     } catch { c.team_assignments_text = ""; }
     res.json(c);
   });
-  app.get("/api/admin/contest-users", admin, (_, res) => res.json(db.prepare("SELECT id,username FROM users ORDER BY username COLLATE NOCASE").all()));
+  app.get("/api/admin/contest-users", auth, domainPermission("create_contest"), (req, res) => res.json(db.prepare("SELECT u.id,u.username FROM users u JOIN domain_members m ON m.user_id=u.id WHERE m.domain_id=? ORDER BY u.username COLLATE NOCASE").all(req.domain.id)));
   const oilContest = (id) => db.prepare("SELECT * FROM contests WHERE id=? AND type='OIL'").get(id);
   const oilPhase = (c) => {
     const start = new Date(c.starts_at).getTime(), now = Date.now();
@@ -271,12 +286,55 @@ export function mountContent(app, db, publicProblem) {
     const c = oilContest(req.params.id), p = c && oilParticipant(req.params.id, req.user.id); if (!c) return res.status(404).json({ error: "OIL 比赛不存在" }); if (!p) return res.status(403).json({ error: "请先加入比赛" });
     const personal = Number(c.personal_problem_count) || Number(c.team_size) || 5;
     let kinds = {}; try { kinds = JSON.parse(c.problem_kinds || "{}"); } catch {}
-    const rows = db.prepare("SELECT p.id,p.title,p.difficulty,cp.position FROM contest_problems cp JOIN problems p ON p.id=cp.problem_id WHERE cp.contest_id=? ORDER BY cp.position").all(c.id).map((x) => { const kind = kinds[x.id] || (x.position < personal ? "personal" : "team"); return { ...x, kind, isPersonal: kind === "personal", isTeam: kind === "team", visible: p.locked ? (kind === "team" || kind === "mystery" || (kind === "personal" && x.position + 1 === p.seat_no)) : (kind === "personal" || kind === "mystery"), isMystery: Boolean(c.mystery_problem && kind === "mystery") }; }).filter((x) => x.visible);
+    const rows = db.prepare("SELECT p.id,p.title,p.difficulty,cp.position FROM contest_problems cp JOIN problems p ON p.id=cp.problem_id WHERE cp.contest_id=? ORDER BY cp.position").all(c.id).map((x) => {
+      const kind = kinds[x.id] || (x.position < personal ? "personal" : "team");
+      return { ...x, kind, isPersonal: kind === "personal", isTeam: kind === "team", visible: !p.locked || kind !== "personal", isMystery: Boolean(c.mystery_problem && kind === "mystery") };
+    }).filter((x) => x.visible);
     res.json({ phase: oilPhase(c), locked: Boolean(p.locked), problems: rows });
   });
   app.get("/api/contests/:id/oil/chat", auth, (req, res) => {
     const p = oilParticipant(req.params.id, req.user.id); if (!p || !p.locked) return res.status(403).json({ error: "锁题后才能进入团队讨论" });
     res.json(db.prepare("SELECT m.*,u.username,u.avatar FROM contest_messages m JOIN users u ON u.id=m.user_id JOIN contest_participants cp ON cp.contest_id=m.contest_id AND cp.user_id=m.user_id WHERE m.contest_id=? AND cp.team_no=? ORDER BY m.id").all(req.params.id, p.team_no));
+  });
+  const hackAccess = (contestId, userId) => {
+    const contest = oilContest(contestId), participant = contest && oilParticipant(contestId, userId);
+    if (!contest) throw new Error("OIL 比赛不存在");
+    if (!participant) throw new Error("请先加入比赛");
+    if (!participant.locked) throw new Error("锁定个人题后才能 Hack");
+    return { contest, participant, phase: oilPhase(contest) };
+  };
+  app.get("/api/contests/:id/oil/hack-targets", auth, (req, res) => {
+    try {
+      const { contest, participant, phase } = hackAccess(req.params.id, req.user.id);
+      if (!['solving','hacking'].includes(phase)) return res.json({ phase, targets: [] });
+      let kinds = {}; try { kinds = JSON.parse(contest.problem_kinds || "{}"); } catch {}
+      const personal = Number(contest.personal_problem_count) || Number(contest.team_size) || 5;
+      const rows = db.prepare(`SELECT s.id,s.problem_id,s.status,s.score,s.language,s.source,s.created_at,u.username,cp.team_no,cp.seat_no,cpr.position
+        FROM submissions s JOIN users u ON u.id=s.user_id
+        JOIN contest_participants cp ON cp.contest_id=? AND cp.user_id=s.user_id
+        JOIN contest_problems cpr ON cpr.contest_id=? AND cpr.problem_id=s.problem_id
+        WHERE (s.contest_id=? OR (s.contest_id IS NULL AND s.created_at>=?)) AND cp.team_no<>?
+        ORDER BY s.id DESC`).all(contest.id,contest.id,contest.id,new Date(contest.starts_at).toISOString().slice(0,19).replace('T',' '),participant.team_no);
+      const targets = rows.filter((row) => { const kind = kinds[row.problem_id] || (Number(row.position) < personal ? "personal" : "team"); return phase === "solving" ? kind === "personal" && Number(row.seat_no) === Number(participant.seat_no) : kind === "team"; });
+      res.json({ phase, targets });
+    } catch (error) { res.status(403).json({ error: error.message }); }
+  });
+  app.post("/api/contests/:id/oil/hacks", auth, (req, res) => {
+    try {
+      const { contest, participant, phase } = hackAccess(req.params.id, req.user.id);
+      const submission = db.prepare(`SELECT s.*,cp.team_no,cp.seat_no,cpr.position FROM submissions s
+        JOIN contest_participants cp ON cp.contest_id=? AND cp.user_id=s.user_id
+        JOIN contest_problems cpr ON cpr.contest_id=? AND cpr.problem_id=s.problem_id WHERE s.id=?`).get(contest.id,contest.id,req.body.submissionId);
+      if (!submission || submission.team_no === participant.team_no) return res.status(400).json({ error: "Hack 目标无效" });
+      let kinds = {}; try { kinds = JSON.parse(contest.problem_kinds || "{}"); } catch {}
+      const personal = Number(contest.personal_problem_count) || Number(contest.team_size) || 5;
+      const kind = kinds[submission.problem_id] || (Number(submission.position) < personal ? "personal" : "team");
+      const allowed = phase === "solving" ? kind === "personal" && Number(submission.seat_no) === Number(participant.seat_no) : phase === "hacking" && kind === "team";
+      if (!allowed) return res.status(409).json({ error: "当前阶段不允许 Hack 该提交" });
+      const input = String(req.body.input || "").slice(0,100000); if (!input.trim()) return res.status(400).json({ error: "请输入 Hack 数据" });
+      const result = db.prepare("INSERT INTO contest_hacks(contest_id,attacker_id,target_user_id,problem_id,subtask,phase,status,target_submission_id,input) VALUES(?,?,?,?,?,?,?,?,?)").run(contest.id,req.user.id,submission.user_id,submission.problem_id,String(req.body.subtask||""),phase,"pending",submission.id,input);
+      res.status(201).json({ id:Number(result.lastInsertRowid),status:"pending" });
+    } catch (error) { res.status(403).json({ error: error.message }); }
   });
   app.post("/api/contests/:id/oil/chat", auth, (req, res) => {
     const p = oilParticipant(req.params.id, req.user.id); if (!p || !p.locked) return res.status(403).json({ error: "锁题后才能发言" }); const content = String(req.body?.content || "").trim(); if (!content || content.length > 2000) return res.status(400).json({ error: "消息不能为空且不能超过 2000 字" });
@@ -317,8 +375,8 @@ export function mountContent(app, db, publicProblem) {
       team_size,
       solving_duration,
       hack_duration,
-      personal_problem_count: oil ? Math.max(0, Math.min(20, Number(b.personal_problem_count) || 5)) : 0,
-      team_problem_count: oil ? Math.max(1, Math.min(20, Number(b.team_problem_count) || 5)) : 0,
+      personal_problem_count: oil ? Object.values(problem_kinds).filter((kind) => kind === "personal").length : 0,
+      team_problem_count: oil ? Object.values(problem_kinds).filter((kind) => kind === "team").length : 0,
       mystery_problem: oil && (hasMystery || b.mystery_problem === true || b.mystery_problem === 1 || b.mystery_problem === "1") ? 1 : 0,
       problem_kinds: JSON.stringify(oil ? problem_kinds : {}),
       team_mode,
@@ -346,16 +404,16 @@ export function mountContent(app, db, publicProblem) {
     teams.forEach((team, teamIndex) => team.forEach((userId, seatIndex) => insert.run(id, userId, teamIndex + 1, seatIndex + 1)));
     teams.forEach((team, teamIndex) => { if (!team.length) return; db.prepare("INSERT INTO contest_team_invites(token,contest_id,team_no,created_by) VALUES(?,?,?,?)").run(randomBytes(18).toString("base64url"), id, teamIndex + 1, team[0]); });
   };
-  app.post("/api/admin/contests", admin, (req, res) => {
+  app.post("/api/admin/contests", auth, domainPermission("create_contest"), (req, res) => {
     try {
       db.exec("BEGIN");
       const c = contestBody(req.body),
         { problems, ...fields } = c,
         r = db
           .prepare(
-            "INSERT INTO contests(title,type,starts_at,duration,description,rule_set,team_size,solving_duration,hack_duration,personal_problem_count,team_problem_count,mystery_problem,problem_kinds,anti_cheat_disabled,team_mode,team_assignments) VALUES(@title,@type,@starts_at,@duration,@description,@rule_set,@team_size,@solving_duration,@hack_duration,@personal_problem_count,@team_problem_count,@mystery_problem,@problem_kinds,@anti_cheat_disabled,@team_mode,@team_assignments)",
+            "INSERT INTO contests(title,type,starts_at,duration,description,rule_set,team_size,solving_duration,hack_duration,personal_problem_count,team_problem_count,mystery_problem,problem_kinds,anti_cheat_disabled,team_mode,team_assignments,creator_id) VALUES(@title,@type,@starts_at,@duration,@description,@rule_set,@team_size,@solving_duration,@hack_duration,@personal_problem_count,@team_problem_count,@mystery_problem,@problem_kinds,@anti_cheat_disabled,@team_mode,@team_assignments,@creator_id)",
           )
-          .run(fields);
+          .run({ ...fields, creator_id: req.user.id });
       setContestProblems(Number(r.lastInsertRowid), problems);
       syncContestTeams(Number(r.lastInsertRowid), c.team_mode, c.team_assignments);
       db.exec("COMMIT");
@@ -365,7 +423,7 @@ export function mountContent(app, db, publicProblem) {
       res.status(400).json({ error: e.message });
     }
   });
-  app.put("/api/admin/contests/:id", admin, (req, res) => {
+  app.put("/api/admin/contests/:id", auth, canEdit("modify_contest", "modify_own_contest", (req) => db.prepare("SELECT creator_id FROM contests WHERE id=?").get(req.params.id)?.creator_id), (req, res) => {
     try {
       db.exec("BEGIN");
       const c = contestBody(req.body),
@@ -385,17 +443,17 @@ export function mountContent(app, db, publicProblem) {
       res.status(400).json({ error: e.message });
     }
   });
-  app.delete("/api/admin/contests/:id", admin, (req, res) => {
+  app.delete("/api/admin/contests/:id", auth, canEdit("modify_contest", "modify_own_contest", (req) => db.prepare("SELECT creator_id FROM contests WHERE id=?").get(req.params.id)?.creator_id), (req, res) => {
     const r = db.prepare("DELETE FROM contests WHERE id=?").run(req.params.id);
     res.status(r.changes ? 204 : 404).end();
   });
-  app.get("/api/discussions", (_, res) =>
+  app.get("/api/discussions", (req, res) =>
     res.json(
       db
         .prepare(
-          `SELECT d.id,d.title,d.content,d.created_at,d.updated_at,u.username,COUNT(r.id) replies FROM discussions d JOIN users u ON u.id=d.user_id LEFT JOIN discussion_replies r ON r.discussion_id=d.id GROUP BY d.id ORDER BY d.updated_at DESC`,
+          `SELECT d.id,d.title,d.content,d.created_at,d.updated_at,u.username,COUNT(r.id) replies FROM discussions d JOIN users u ON u.id=d.user_id LEFT JOIN discussion_replies r ON r.discussion_id=d.id WHERE d.domain_id=? GROUP BY d.id ORDER BY d.updated_at DESC`,
         )
-        .all(),
+        .all(Number(req.headers["x-domain-id"]) || db.prepare("SELECT id FROM domains ORDER BY id LIMIT 1").get()?.id),
     ),
   );
   app.get("/api/discussions/:id", (req, res) => {
@@ -412,14 +470,15 @@ export function mountContent(app, db, publicProblem) {
       .all(req.params.id);
     res.json(post);
   });
-  app.post("/api/discussions", auth, (req, res) => {
+  app.post("/api/discussions", auth, domainPermission("create_discussion"), (req, res) => {
     try {
       const r = db
-        .prepare("INSERT INTO discussions(user_id,title,content) VALUES(?,?,?)")
+        .prepare("INSERT INTO discussions(user_id,title,content,domain_id) VALUES(?,?,?,?)")
         .run(
           req.user.id,
           text(req.body.title, "标题", 120),
           text(req.body.content, "内容"),
+          req.domain.id,
         );
       res.status(201).json({ id: Number(r.lastInsertRowid) });
     } catch (e) {
@@ -445,10 +504,11 @@ export function mountContent(app, db, publicProblem) {
   });
   app.delete("/api/discussions/:id", auth, (req, res) => {
     const post = db
-      .prepare("SELECT user_id FROM discussions WHERE id=?")
+      .prepare("SELECT user_id,domain_id FROM discussions WHERE id=?")
       .get(req.params.id);
     if (!post) return res.status(404).end();
-    if (post.user_id !== req.user.id && req.user.role !== "admin")
+    const perms = domainPerms.permissionsFor(req.user, post.domain_id).perms;
+    if (!perms.delete_discussion && !(post.user_id === req.user.id && perms.delete_own_discussion))
       return res.status(403).json({ error: "无权删除" });
     db.prepare("DELETE FROM discussions WHERE id=?").run(req.params.id);
     res.status(204).end();

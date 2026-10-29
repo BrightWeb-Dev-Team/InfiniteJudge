@@ -1,30 +1,233 @@
-Infinte Judge API: http://localhost:3001
+Infinte Judge API: http://localhost:4001
 Sandbox: sandbox-exec (filesystem+network)
 Plugins: @infinte/example-hydro-plugin
-Infinte Judge API: http://localhost:3001
+Error: Cannot find module '../encodings'
+Require stack:
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/iconv-lite/lib/index.js
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/raw-body/index.js
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/read.js
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/types/json.js
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/index.js
+- /Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/express/lib/express.js
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1142:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1169:12)
+    at Module._load (node:internal/modules/cjs/loader:1341:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.require (node:internal/modules/cjs/loader:1674:12)
+    at require (node:internal/modules/helpers:157:16)
+    at Object.getCodec (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/iconv-lite/lib/index.js:65:27)
+    at Object.getDecoder (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/iconv-lite/lib/index.js:127:23)
+    at getDecoder (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/raw-body/index.js:46:18)
+    at readStream (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/raw-body/index.js:194:15)
+    at getRawBody (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/raw-body/index.js:116:12)
+    at read (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/read.js:79:3)
+    at jsonParser (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/types/json.js:138:5)
+    at Layer.handle [as handle_request] (/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/express/lib/router/layer.js:95:5) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/iconv-lite/lib/index.js',
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/raw-body/index.js',
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/read.js',
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/lib/types/json.js',
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/body-parser/index.js',
+    '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/node_modules/express/lib/express.js'
+  ],
+  expose: true,
+  statusCode: 400,
+  status: 400
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfinteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+Infinte Judge API: http://localhost:4001
 Sandbox: sandbox-exec (filesystem+network)
 Plugins: @infinte/example-hydro-plugin
-Infinte Judge API: http://localhost:3001
+Infinte Judge API: http://localhost:4001
 Sandbox: sandbox-exec (filesystem+network)
 Plugins: @infinte/example-hydro-plugin
-node:events:486
-      throw er; // Unhandled 'error' event
-      ^
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+[Error: ENOENT: no such file or directory, stat '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/damaoleopard/Downloads/InfiniteJudge-v3.5.0/dist/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+node:fs:621
+  return binding.open(
+                 ^
 
-Error: listen EADDRINUSE: address already in use :::3001
-    at Server.setupListenHandle [as _listen2] (node:net:2008:16)
-    at listenInCluster (node:net:2065:12)
-    at Server.listen (node:net:2170:7)
-    at app.listen (/Users/jesper/Desktop/项目/InfiniteJudge/node_modules/express/lib/application.js:635:24)
-    at file:///Users/jesper/Desktop/%E9%A1%B9%E7%9B%AE/InfiniteJudge/server/index.js:1181:5
-Emitted 'error' event on Server instance at:
-    at emitErrorNT (node:net:2044:8)
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
-  code: 'EADDRINUSE',
-  errno: -48,
-  syscall: 'listen',
-  address: '::',
-  port: 3001
+Error: ENOENT: no such file or directory, open '/Users/damaoleopard/Downloads/InfiniteJudge/dist/index.html'
+    at Object.openSync (node:fs:621:18)
+    at readFileSync (node:fs:487:35)
+    at compress (file:///Users/damaoleopard/Downloads/InfiniteJudge/server/index.js:2019:18)
+    at file:///Users/damaoleopard/Downloads/InfiniteJudge/server/index.js:2026:3 {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/damaoleopard/Downloads/InfiniteJudge/dist/index.html'
 }
 
-Node.js v25.8.1
+Node.js v24.21.0
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin
+Infinte Judge API: http://localhost:4001
+Sandbox: sandbox-exec (filesystem+network)
+Plugins: @infinte/example-hydro-plugin

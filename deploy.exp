@@ -1,0 +1,22 @@
+#!/usr/bin/env expect -f
+set timeout 120
+set server "root@8.210.166.25"
+set password "BrightWeb666"
+set remote_dir "/opt/infinitejudge"
+set local_dir [lindex $argv 0]
+
+# Sync files
+spawn rsync -avz --delete --exclude '.git' --exclude 'node_modules' --exclude 'data' --exclude 'runtime' --exclude 'dist' --exclude '.DS_Store' "$local_dir/" "$server:$remote_dir/"
+expect {
+    "password:" { send "$password\r"; exp_continue }
+    eof
+}
+
+# Build and restart
+spawn ssh "$server" "cd $remote_dir && npm ci --no-audit --no-fund && npm run build && bash deploy.sh"
+expect {
+    "password:" { send "$password\r"; exp_continue }
+    eof
+}
+
+puts "部署完成"

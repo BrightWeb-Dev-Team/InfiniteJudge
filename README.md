@@ -6,7 +6,7 @@ Project repository: <https://github.com/BrightWeb-Dev-Team/InfiniteJudge>
 
 本项目采用自定义的 InfiniteJudge 部署与署名许可协议。允许部署、运行和修改，
 但所有网页必须保留可见且可点击的页脚版权信息
-`Powered by ©2026 BrightWeb Dev Team`。详细条款请阅读 [LICENSE](LICENSE)。
+`Powered by ©2025-2026 BrightWeb Dev Team`。详细条款请阅读 [LICENSE](LICENSE)。
 
 ## 中文更新服务协议
 
@@ -59,18 +59,24 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. The API and judge worker listen on port 3001.
+Open <http://localhost:5173>. The API and judge worker listen on port 4001.
 
 ## One-click deployment (macOS / Linux)
 
 ```bash
-chmod +x deploy.sh stop.sh
+chmod +x deploy.sh
 ./deploy.sh
 ```
 
-Open <http://localhost:3001>. On a new database, the first-run setup page asks
+Open <http://localhost:4001>. On a new database, the first-run setup page asks
 for the brand, logo, service URL and administrator account. Email verification
-is optional and disabled by default. Stop the service with `./stop.sh`.
+is optional and disabled by default.
+
+License administration (`/api/key-platform/admin`, orders, key issuance) is
+served by the main application itself. The official license service used by
+customer sites is <https://key.brightweb.top>. Set `IJ_LICENSE_KEY` on a
+customer site to activate a key; the site then displays `Community` or
+`Professional` in its footer according to the issued license.
 
 ## Sandbox backends
 

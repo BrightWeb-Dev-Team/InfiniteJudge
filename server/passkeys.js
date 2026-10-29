@@ -17,8 +17,17 @@ function context(req, siteName) {
   return { origin, rpID: new URL(origin).hostname, rpName: siteName || "Infinite Judge" };
 }
 
+const MAX_PENDING_CHALLENGES = 5000;
+
 function issueChallenge(challenge, userId, purpose) {
-  for (const [key, value] of challenges) if (value.expiresAt <= Date.now()) challenges.delete(key);
+  const now = Date.now();
+  for (const [key, value] of challenges) if (value.expiresAt <= now) challenges.delete(key);
+  // Anonymous callers can request options, so keep the map bounded.
+  while (challenges.size >= MAX_PENDING_CHALLENGES) {
+    const oldest = challenges.keys().next().value;
+    if (oldest === undefined) break;
+    challenges.delete(oldest);
+  }
   const ceremony = randomBytes(24).toString("base64url");
   challenges.set(ceremony, { challenge, userId, purpose, expiresAt: Date.now() + CHALLENGE_TTL_MS });
   return ceremony;

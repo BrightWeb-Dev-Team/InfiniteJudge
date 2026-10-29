@@ -26,6 +26,32 @@ test("installs a tar.gz update package", async () => {
   } finally { rmSync(item.temp, { recursive: true, force: true }); }
 });
 
+test("installs development dependencies for update builds in production", async () => {
+  const item = fixture(), archive = resolve(item.temp, "update.tar.gz");
+  const previousNodeEnv = process.env.NODE_ENV;
+  try {
+    const builder = resolve(item.release, "fixture-builder");
+    mkdirSync(builder);
+    writeFileSync(resolve(builder, "package.json"), JSON.stringify({ name: "ij-fixture-builder", version: "1.0.0", main: "index.cjs" }));
+    writeFileSync(resolve(builder, "index.cjs"), "module.exports = 'built with development dependency';\n");
+    writeFileSync(resolve(item.release, "package.json"), JSON.stringify({
+      name: "ij-update-fixture", version: "9.9.9-test", private: true,
+      scripts: { build: "node build.cjs" },
+      devDependencies: { "ij-fixture-builder": "file:./fixture-builder" },
+    }));
+    writeFileSync(resolve(item.release, "build.cjs"), "require('node:fs').writeFileSync('build-result.txt', require('ij-fixture-builder'));\n");
+    await tar.c({ gzip: true, cwd: item.temp, file: archive }, ["release"]);
+    process.env.NODE_ENV = "production";
+    const result = await installUpdate({ archive: readFileSync(archive), filename: "update.tar.gz", root: item.target, origin: "test" });
+    assert.equal(result.version, "9.9.9-test");
+    assert.equal(readFileSync(resolve(item.target, "build-result.txt"), "utf8"), "built with development dependency");
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    rmSync(item.temp, { recursive: true, force: true });
+  }
+});
+
 test("installs a ZIP update package", { skip: !existsSync("/usr/bin/zip") }, async () => {
   const item = fixture(), archive = resolve(item.temp, "update.zip");
   try {
