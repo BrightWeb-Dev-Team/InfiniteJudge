@@ -46,6 +46,8 @@ export type Submission = {
   created_at: string;
 };
 export type User = { id: number; username: string; role: string; avatar?: string; rp?: number; bio?: string; custom_css?: string; custom_html?: string; custom_head?: string; custom_script?: string };
+export type ThemePalette = { background: string; surface: string; surface2: string; text: string; muted: string; line: string; accent: string; accent2: string; navBackground?: string; navText?: string; logoMode?: "colorful" | "custom"; logoColor?: string; midgroundColors?: string[]; gradientAngle?: number; fadeMode?: "top" | "bottom" | "full"; midgroundBrightness?: number; glassMode?: "off" | "standard" | "light"; imageEnabled?: boolean; backgroundImage?: string; imageRepeat?: "no-repeat" | "repeat" | "repeat-x" | "repeat-y"; imageSize?: "auto" | "cover" | "contain" | "custom"; imageSizeCustom?: string; imagePositionX?: number; imagePositionY?: number; glass?: boolean };
+export type StoreTheme = { id: number; user_id: number; name: string; description: string; palette: ThemePalette; author: string; uses: number; mine?: boolean; created_at: string; updated_at: string };
 export type CallSignalType = "offer" | "answer" | "ice" | "reject" | "hangup" | "busy";
 export type CallSignal = {
   id: number;
@@ -269,6 +271,11 @@ export const api = {
       body: JSON.stringify({ username, password, email, code }),
     }),
   me: () => request<User>("/me"),
+  themes: (mine = false) => request<StoreTheme[]>(`/themes${mine ? "?mine=1" : ""}`),
+  createTheme: (body: { name: string; description: string; palette: ThemePalette }) => request<StoreTheme>("/themes", { method: "POST", body: JSON.stringify(body) }),
+  deleteTheme: (id: number) => request<void>(`/themes/${id}`, { method: "DELETE" }),
+  activeTheme: () => request<{ theme: StoreTheme | null }>("/me/theme"),
+  applyTheme: (themeId: number | null) => request<{ theme: StoreTheme | null }>("/me/theme", { method: "PUT", body: JSON.stringify({ themeId }) }),
   customize: () => request<{ custom_css: string; custom_script: string; custom_html: string; custom_head: string }>("/me/customize"),
   updateCustomize: (body: { custom_css: string; custom_script: string; custom_html: string; custom_head: string }) => request<{ custom_css: string; custom_script: string; custom_html: string; custom_head: string }>("/me/customize", { method: "PUT", body: JSON.stringify(body) }),
   updateProfile: (body: { username: string; avatar: string; bio: string }) => request<User>("/me/profile", { method: "PUT", body: JSON.stringify(body) }),

@@ -619,6 +619,86 @@ app.put("/api/me/customize", auth, (req, res) => {
     res.json({ custom_css: customCss, custom_script: customScript, custom_html: customHtml, custom_head: customHead });
   } catch (error) { res.status(500).json({ error: `自定义内容保存失败：${error.message}` }); }
 });
+const THEME_COLOR_KEYS = ["background","surface","surface2","text","muted","line","accent","accent2"];
+const normalizeThemePalette = (input) => {
+  const palette = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const result = {};
+  for (const key of THEME_COLOR_KEYS) {
+    const value = String(palette[key] || "").trim();
+    if (!/^#[0-9a-f]{6}$/i.test(value)) throw new Error(`${key} 颜色格式无效`);
+    result[key] = value.toLowerCase();
+  }
+  const backgroundImage = String(palette.backgroundImage || "").trim();
+  if (backgroundImage) {
+    let url; try { url = new URL(backgroundImage); } catch { throw new Error("背景图片 URL 无效"); }
+    if (!["http:","https:"].includes(url.protocol)) throw new Error("背景图片只支持 HTTP/HTTPS URL");
+  }
+  const midgroundColors = (Array.isArray(palette.midgroundColors) ? palette.midgroundColors : [palette.surface2]).slice(0, 5).map((value) => {
+    value = String(value || "").trim();
+    if (!/^#[0-9a-f]{6}$/i.test(value)) throw new Error("中景颜色格式无效");
+    return value.toLowerCase();
+  });
+  const optionalColor = (key, fallback) => { const value=String(palette[key] || fallback).trim(); if(!/^#[0-9a-f]{6}$/i.test(value)) throw new Error(`${key} 颜色格式无效`); return value.toLowerCase(); };
+  return { ...result,
+    navBackground: optionalColor("navBackground", result.surface), navText: optionalColor("navText", result.text),
+    logoMode: palette.logoMode === "custom" ? "custom" : "colorful", logoColor: optionalColor("logoColor", result.accent),
+    midgroundColors: midgroundColors.length ? midgroundColors : [result.surface2], gradientAngle: Math.max(0,Math.min(360,Number(palette.gradientAngle)||0)),
+    fadeMode: ["top","bottom","full"].includes(palette.fadeMode) ? palette.fadeMode : "full", midgroundBrightness: Math.max(-100,Math.min(100,Number(palette.midgroundBrightness)||0)),
+    glassMode: ["standard","light"].includes(palette.glassMode) ? palette.glassMode : "off", imageEnabled: Boolean(palette.imageEnabled && backgroundImage),
+    backgroundImage: backgroundImage.slice(0, 1000), imageRepeat: ["repeat","repeat-x","repeat-y"].includes(palette.imageRepeat) ? palette.imageRepeat : "no-repeat",
+    imageSize: ["cover","contain","custom"].includes(palette.imageSize) ? palette.imageSize : "auto", imageSizeCustom: String(palette.imageSizeCustom || "").slice(0,40),
+    imagePositionX: Math.max(0,Math.min(100,Number(palette.imagePositionX)||0)), imagePositionY: Math.max(0,Math.min(100,Number(palette.imagePositionY)||0)),
+    glass: ["standard","light"].includes(palette.glassMode)
+  };
+};
+const publicTheme = (row, userId = 0) => ({ ...row, palette: JSON.parse(row.palette), mine: Number(row.user_id) === Number(userId) });
+app.get("/api/themes", (req, res) => {
+  const mine = req.query.mine === "1";
+  let userId = 0;
+  if (mine) {
+    const header = String(req.headers.authorization || "");
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const session = token ? db.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").get(token, Date.now()) : null;
+    if (!session) return res.status(401).json({ error: "请先登录" });
+    userId = session.user_id;
+  }
+  const rows = mine
+    ? db.prepare("SELECT t.*,u.username author FROM themes t JOIN users u ON u.id=t.user_id WHERE t.user_id=? ORDER BY t.updated_at DESC,t.id DESC").all(userId)
+    : db.prepare("SELECT t.*,u.username author FROM themes t JOIN users u ON u.id=t.user_id WHERE t.status='published' ORDER BY t.uses DESC,t.updated_at DESC,t.id DESC LIMIT 200").all();
+  res.json(rows.map((row) => publicTheme(row, userId)));
+});
+app.post("/api/themes", auth, (req, res) => {
+  const name = String(req.body.name || "").trim(), description = String(req.body.description || "").trim();
+  if (!name || name.length > 40) return res.status(400).json({ error: "主题名称须为 1-40 个字符" });
+  if (description.length > 180) return res.status(400).json({ error: "主题介绍不能超过 180 个字符" });
+  try {
+    const palette = normalizeThemePalette(req.body.palette);
+    const result = db.prepare("INSERT INTO themes(user_id,name,description,palette,status) VALUES(?,?,?,?, 'published')").run(req.user.id,name,description,JSON.stringify(palette));
+    const row = db.prepare("SELECT t.*,u.username author FROM themes t JOIN users u ON u.id=t.user_id WHERE t.id=?").get(result.lastInsertRowid);
+    res.status(201).json(publicTheme(row, req.user.id));
+  } catch (error) { res.status(400).json({ error: error.message || "主题配置无效" }); }
+});
+app.delete("/api/themes/:id", auth, (req, res) => {
+  const theme = db.prepare("SELECT user_id FROM themes WHERE id=?").get(req.params.id);
+  if (!theme) return res.status(404).json({ error: "主题不存在" });
+  if (theme.user_id !== req.user.id && req.user.role !== "root") return res.status(403).json({ error: "只能删除自己创建的主题" });
+  db.prepare("DELETE FROM themes WHERE id=?").run(req.params.id); res.status(204).end();
+});
+app.get("/api/me/theme", auth, (req, res) => {
+  const row = db.prepare("SELECT t.*,u.username author FROM user_themes a JOIN themes t ON t.id=a.theme_id JOIN users u ON u.id=t.user_id WHERE a.user_id=?").get(req.user.id);
+  res.json({ theme: row ? publicTheme(row, req.user.id) : null });
+});
+app.put("/api/me/theme", auth, (req, res) => {
+  const id = Number(req.body.themeId || 0);
+  if (!id) { db.prepare("DELETE FROM user_themes WHERE user_id=?").run(req.user.id); return res.json({ theme: null }); }
+  const row = db.prepare("SELECT t.*,u.username author FROM themes t JOIN users u ON u.id=t.user_id WHERE t.id=? AND t.status='published'").get(id);
+  if (!row) return res.status(404).json({ error: "主题不存在或尚未发布" });
+  const previous = db.prepare("SELECT theme_id FROM user_themes WHERE user_id=?").get(req.user.id)?.theme_id;
+  db.prepare("INSERT INTO user_themes(user_id,theme_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET theme_id=excluded.theme_id,updated_at=CURRENT_TIMESTAMP").run(req.user.id,id);
+  if (Number(previous) !== id) db.prepare("UPDATE themes SET uses=uses+1 WHERE id=?").run(id);
+  res.json({ theme: publicTheme(row, req.user.id) });
+});
+
 app.get("/api/me/passkeys", auth, (req, res) => res.json(db.prepare("SELECT id,name,device_type,backed_up,created_at,last_used_at FROM passkeys WHERE user_id=? ORDER BY created_at DESC").all(req.user.id)));
 app.post("/api/me/passkeys/options", auth, async (req, res) => {
   try { res.json(await registrationOptions(req, passkeySiteName())); } catch (error) { passkeyError(res, error); }

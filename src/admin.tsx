@@ -19,6 +19,8 @@ export const emptyProblem = {
   testcases: '[["1 2","3"]]',
   anti_cheat_enabled: 0,
   anti_cheat_limit: 3,
+  integrity_enabled: 0,
+  integrity_summary_limit: 4000,
   hidden: 0,
   spj_enabled: 0,
   spj_source: "",
@@ -316,6 +318,8 @@ export function AdminPage({
             <label className="check-row"><input type="checkbox" checked={!!pform.hidden} onChange={(e) => setPform({ ...pform, hidden: e.target.checked ? 1 : 0 })} />隐藏题目（仅管理员和 Root 可见）</label>
             <label className="check-row"><input type="checkbox" checked={!!pform.anti_cheat_enabled} onChange={(e) => setPform({ ...pform, anti_cheat_enabled: e.target.checked ? 1 : 0 })} />开启反作弊（监控切屏）</label>
             {pform.anti_cheat_enabled && <Field label="切屏次数上限"><input type="number" min="1" max="100" value={pform.anti_cheat_limit || 3} onChange={(e) => setPform({ ...pform, anti_cheat_limit: +e.target.value })} /></Field>}
+            <label className="check-row"><input type="checkbox" checked={!!pform.integrity_enabled} onChange={(e) => setPform({ ...pform, integrity_enabled: e.target.checked ? 1 : 0, question_type: e.target.checked ? "programming" : pform.question_type })} />开启 AI 作弊检测（代码输出、粘贴监控、水印与 Computer Use 防护）</label>
+            {pform.integrity_enabled && <Field label="输出摘要上限（字符，答案超过则无法开启 Computer Use 防护）"><input type="number" min="200" max="20000" value={pform.integrity_summary_limit || 4000} onChange={(e) => setPform({ ...pform, integrity_summary_limit: +e.target.value })} /></Field>}
             {["description"].map((k) => (
               <Field
                 label={

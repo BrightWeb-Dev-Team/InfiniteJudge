@@ -2,15 +2,51 @@ import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
 import { api, CallSignal, User } from "./api";
 
-type Peer = { uid: number; name: string; avatar?: string };
+export type Peer = { uid: number; name: string; avatar?: string };
+
+export const CALL_ENDED = "ij-call-ended";
+export const CALL_STATUS = "ij-call-status";
+
+type CallStatus = { phase: Phase; peer: Peer | null };
+let currentStatus: CallStatus = { phase: "idle", peer: null };
+
+export const callStatus = (): CallStatus => currentStatus;
+
+function publishStatus(phase: Phase, peer: Peer | null) {
+  currentStatus = { phase, peer };
+  window.dispatchEvent(new CustomEvent(CALL_STATUS));
+}
+
+type StartRequest = { peer: Peer; id: number };
+let startRequest: StartRequest | null = null;
+
+/// Asks the single <VideoCall> instance on the page to call `peer`.
+export function startCall(peer: Peer) {
+  startRequest = { peer, id: Date.now() };
+  window.dispatchEvent(new CustomEvent("ij-call-start"));
+}
 type Phase = "idle" | "calling" | "incoming" | "connected";
 
-export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me: User | null; peer: Peer | null; report: (message: string) => void; autoStart?: boolean; onEnded?: (reason: "ended" | "offline") => void }) {
+// audioOnly is used by the native iOS shell, whose WKWebView cannot capture video via getUserMedia.
+export function VideoCall({ me, peer, report, autoStart = false, audioOnly = false, autoStartCall = false, inboundCallId, onIncoming, onEnded }: {
+  me: User | null;
+  peer: Peer | null;
+  report: (message: string) => void;
+  autoStart?: boolean;
+  audioOnly?: boolean;
+  autoStartCall?: boolean;
+  /** Poll as an inbox without ringing: incoming calls are reported through onIncoming instead. */
+  inboundCallId?: string;
+  onIncoming?: (peer: Peer) => void;
+  onEnded?: (reason: "ended" | "offline") => void;
+}) {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [remotePeer, setRemotePeer] = useState<Peer | null>(null);
+  const [remotePeer, setRemotePeerState] = useState<Peer | null>(null);
+  const setRemotePeer = (value: Peer | null) => { remotePeerRef.current = value; setRemotePeerState(value); };
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [offline, setOffline] = useState(false);
+  const [request, setRequest] = useState<StartRequest | null>(null);
   const phaseRef = useRef<Phase>("idle");
   const callIdRef = useRef("");
   const peerRef = useRef<Peer | null>(null);
@@ -22,11 +58,14 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
   const pendingOfferRef = useRef<CallSignal | null>(null);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const lastSignalRef = useRef(0);
+  const busySentRef = useRef<Set<string>>(new Set());
 
   const changePhase = (next: Phase) => {
     phaseRef.current = next;
     setPhase(next);
+    publishStatus(next, next === "idle" ? null : remotePeerRef.current);
   };
+  const remotePeerRef = useRef<Peer | null>(null);
 
   const reset = () => {
     pcRef.current?.close();
@@ -53,8 +92,16 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
   };
 
   const acquireMedia = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前浏览器不支持视频通话");
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前浏览器无法访问摄像头和麦克风（需要 HTTPS）");
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: !audioOnly, audio: true });
+    } catch (error: any) {
+      if (error?.name === "NotAllowedError") throw new Error("摄像头或麦克风权限被拒绝，请在浏览器设置中允许后重试");
+      if (error?.name === "NotFoundError" || error?.name === "OverconstrainedError") throw new Error("没有找到可用的摄像头或麦克风");
+      // Audio-only keeps calls usable on machines without a camera.
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
     streamRef.current = stream;
     if (localVideoRef.current) localVideoRef.current.srcObject = stream;
     return stream;
@@ -76,6 +123,7 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
       if (pc.connectionState === "connected") changePhase("connected");
       if (pc.connectionState === "failed") {
         reset();
+        window.dispatchEvent(new CustomEvent(CALL_ENDED));
         report("视频通话连接失败");
       }
     };
@@ -89,12 +137,13 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
     for (const candidate of candidates) await pc.addIceCandidate(candidate).catch(() => undefined);
   };
 
-  const startCall = async () => {
-    if (!peer || phaseRef.current !== "idle") return;
+  const startCall = async (as: "offer" | "answer" = "offer") => {
+    const target = peerRef.current ?? peer;
+    if (!target || phaseRef.current !== "idle") return;
     const callId = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     callIdRef.current = callId;
-    peerRef.current = peer;
-    setRemotePeer(peer);
+    peerRef.current = target;
+    setRemotePeer(target);
     changePhase("calling");
     setOffline(false);
     try {
@@ -103,7 +152,7 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await sendSignal("offer", offer);
+      await sendSignal(as, offer);
     } catch (error: any) {
       reset();
       report(error?.message || "无法启动视频通话，请检查摄像头和麦克风权限");
@@ -122,8 +171,28 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
   }, [phase]);
 
   useEffect(() => {
+    const pick = () => { if (startRequest) { setRequest(startRequest); startRequest = null; } };
+    window.addEventListener("ij-call-start", pick);
+    pick();
+    return () => window.removeEventListener("ij-call-start", pick);
+  }, []);
+  useEffect(() => {
+    const accept = () => { if (phaseRef.current === "incoming") void acceptCall(); };
+    window.addEventListener("ij-call-accept", accept);
+    return () => window.removeEventListener("ij-call-accept", accept);
+  }, []);
+  useEffect(() => {
+    if (!request) return;
+    peerRef.current = request.peer;
+    setRemotePeer(request.peer);
+    void startCall();
+  }, [request?.id]);
+  useEffect(() => {
     if (autoStart && peer && phaseRef.current === "idle") void startCall();
   }, [autoStart, peer?.uid]);
+  useEffect(() => {
+    if (autoStartCall && peer && phaseRef.current === "idle") void startCall("answer");
+  }, [autoStartCall, peer?.uid]);
 
   const acceptCall = async () => {
     const offerSignal = pendingOfferRef.current;
@@ -169,12 +238,26 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
         for (const signal of signals) {
           lastSignalRef.current = Math.max(lastSignalRef.current, signal.id);
           if (signal.type === "offer") {
-            if (phaseRef.current !== "idle") {
-              if (signal.call_id !== callIdRef.current) void sendSignal("busy", {}, signal.sender_id, signal.call_id).catch(() => undefined);
+            if (inboundCallId) {
+              // Inbox mode: never ring here, just surface the call to the page header.
+              if (!busySentRef.current.has(signal.call_id)) {
+                busySentRef.current.add(signal.call_id);
+                onIncoming?.({ uid: signal.sender_id, name: signal.sender, avatar: signal.sender_avatar });
+                void sendSignal("busy", {}, signal.sender_id, signal.call_id).catch(() => undefined);
+              }
               continue;
             }
+            if (phaseRef.current !== "idle") {
+              if (signal.call_id !== callIdRef.current && !busySentRef.current.has(signal.call_id)) {
+                busySentRef.current.add(signal.call_id);
+                void sendSignal("busy", {}, signal.sender_id, signal.call_id).catch(() => undefined);
+              }
+              continue;
+            }
+            if (busySentRef.current.has(signal.call_id)) continue;
             pendingOfferRef.current = signal;
             peerRef.current = { uid: signal.sender_id, name: signal.sender, avatar: signal.sender_avatar };
+            remotePeerRef.current = peerRef.current;
             callIdRef.current = signal.call_id;
             setRemotePeer(peerRef.current);
             changePhase("incoming");
@@ -189,7 +272,7 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
             if (pcRef.current?.remoteDescription) await pcRef.current.addIceCandidate(signal.payload).catch(() => undefined);
             else pendingIceRef.current.push(signal.payload);
           } else if (signal.type === "reject" || signal.type === "busy" || signal.type === "hangup") {
-            const message = signal.type === "busy" ? "对方正在通话中" : signal.type === "reject" ? "对方不在线或已拒绝通话" : "视频通话已结束";
+            const message = signal.type === "busy" ? "对方正在通话中" : signal.type === "reject" ? "对方拒接（App 端无法接听网页邀请）" : "视频通话已结束";
             reset();
             if (signal.type === "reject") setOffline(true);
             if (signal.type === "reject") onEnded?.("offline");
@@ -217,6 +300,7 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
     setMuted(next);
   };
   const toggleCamera = () => {
+    if (audioOnly) return;
     const next = !cameraOff;
     streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !next; });
     setCameraOff(next);
@@ -225,7 +309,7 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
   return <>
     {offline && peer && <div className="video-call-offline"><div className="offline-avatar">{peer.avatar ? <img src={peer.avatar} alt="" /> : peer.name.slice(0, 1)}</div><strong>{peer.name}</strong><span>对方不在线</span><button className="plain" onClick={() => { setOffline(false); void startCall(); }}><Phone />重新呼叫</button></div>}
       {phase === "idle" && peer && (
-        <button type="button" className="video-call-start" onClick={startCall} title="发起视频通话">
+        <button type="button" className="video-call-start" onClick={() => startCall()} title="发起视频通话">
           <Video size={17} />
           <span>视频通话</span>
         </button>
@@ -236,13 +320,16 @@ export function VideoCall({ me, peer, report, autoStart = false, onEnded }: { me
       <div className="video-call-controls"><button className="call-reject" onClick={rejectCall} title="拒绝"><PhoneOff /></button><button className="call-accept" onClick={acceptCall} title="接听"><Phone /></button></div>
     </div>}
     {(phase === "calling" || phase === "connected") && <div className={`video-call-layer ${phase}`}>
-      <video className="video-call-remote" ref={remoteVideoRef} autoPlay playsInline />
-      <video className="video-call-local" ref={localVideoRef} autoPlay muted playsInline />
-      <div className="video-call-head"><strong>{remotePeer?.name}</strong><span>{phase === "calling" ? "等待对方接受邀请" : "视频通话中"}</span></div>
-      <div className="video-call-controls">
+      {audioOnly ? <div className="video-call-head"><strong>{remotePeer?.name}</strong><span>{phase === "calling" ? "等待对方接受邀请" : "语音通话中"}</span></div> : <>
+        <video className="video-call-remote" ref={remoteVideoRef} autoPlay playsInline />
+        <video className="video-call-local" ref={localVideoRef} autoPlay muted playsInline />
+        <div className="video-call-head"><strong>{remotePeer?.name}</strong><span>{phase === "calling" ? "等待对方接受邀请" : "视频通话中"}</span></div>
+      </>}
+      <div className={`video-call-controls ${audioOnly ? "audio-only" : ""}`}>
+        {audioOnly && remotePeer && <div className="audio-call-avatar">{remotePeer.avatar ? <img src={remotePeer.avatar} alt="" /> : remotePeer.name.slice(0, 1)}</div>}
         <button onClick={toggleMute} title={muted ? "打开麦克风" : "关闭麦克风"}>{muted ? <MicOff /> : <Mic />}<span>{muted ? "麦克风已关" : "麦克风已开"}</span></button>
         <button className="call-reject" onClick={hangUp} title="挂断"><PhoneOff /><span>挂断</span></button>
-        <button onClick={toggleCamera} title={cameraOff ? "打开摄像头" : "关闭摄像头"}>{cameraOff ? <VideoOff /> : <Video />}<span>{cameraOff ? "摄像头已关" : "摄像头已开"}</span></button>
+        {!audioOnly && <button onClick={toggleCamera} title={cameraOff ? "打开摄像头" : "关闭摄像头"}>{cameraOff ? <VideoOff /> : <Video />}<span>{cameraOff ? "摄像头已关" : "摄像头已开"}</span></button>}
       </div>
     </div>}
   </>;

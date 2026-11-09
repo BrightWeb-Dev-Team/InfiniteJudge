@@ -46,6 +46,7 @@ import {
   Heart,
   Video,
   Ban,
+  Palette,
 } from "lucide-react";
 import {
   api,
@@ -57,6 +58,7 @@ import {
   SiteConfig,
   Submission,
   User,
+  StoreTheme,
 } from "./api";
 import { AdminPage, emptyProblem } from "./admin";
 import { ObjectiveItemsEditor } from "./objective-editor";
@@ -75,6 +77,7 @@ import "./liquid-glass.css";
 import { LiquidGlassEffects } from "./liquid-glass";
 import { AiAssistantPage } from "./ai-assistant";
 import { startChatApp } from "./chat";
+import { ThemeStorePage } from "./theme-store";
 
 const oauthHash = new URLSearchParams(location.hash.replace(/^#/, ""));
 const oauthCode = oauthHash.get("oauth_code");
@@ -113,6 +116,7 @@ type Page =
   | "certification-create"
   | "certification-guide"
   | "customize"
+  | "themes"
   | "ai-assistant";
 
 type Theme = "light" | "dark" | "meteor" | "miku";
@@ -151,6 +155,7 @@ const pagePaths: Record<Exclude<Page, "problem" | "profile">, string> = {
   files: "/files",
   "video-call": "/video-call",
   customize: "/customize",
+  themes: "/themes",
   "ai-assistant": "/ai-assistant",
 };
 function routeFromPath(): { page: Page; id?: string } {
@@ -202,6 +207,7 @@ function routeFromPath(): { page: Page; id?: string } {
           "/files": "files",
           "/video-call": "video-call",
           "/customize": "customize",
+          "/themes": "themes",
           "/ai-assistant": "ai-assistant",
         } as any
       )[path] || "home",
@@ -467,6 +473,7 @@ function App() {
   const [setup, setSetup] = useState<boolean | null>(null),
     [page, setPage] = useState<Page>(initialRoute.page),
     [theme, setTheme] = useState<Theme>(getInitialTheme),
+    [activeStoreTheme, setActiveStoreTheme] = useState<StoreTheme | null>(null),
     [liquidGlass, setLiquidGlass] = useState(() => {
       try { return localStorage.getItem("ij-liquid-glass") === "1"; }
       catch { return false; }
@@ -560,6 +567,7 @@ function App() {
         .me()
         .then(async (value) => {
           setUser(value);
+          api.activeTheme().then(({ theme }) => setActiveStoreTheme(theme)).catch(() => {});
           if (initialRoute.page === "settings" && value.role === "root") {
             let valid = adminVerified;
             if (valid) {
@@ -605,9 +613,32 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [page]);
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const root = document.documentElement;
+    const palette = activeStoreTheme?.palette;
+    root.dataset.theme = palette ? "custom" : theme;
     localStorage.setItem("theme", theme);
-  }, [theme]);
+    const variables: Record<string,string> = palette ? { "--bg":palette.background,"--surface":palette.surface,"--surface2":palette.surface2,"--text":palette.text,"--muted":palette.muted,"--line":palette.line,"--accent":palette.accent,"--accent2":palette.accent2 } : {};
+    for (const key of ["--bg","--surface","--surface2","--text","--muted","--line","--accent","--accent2"]) palette ? root.style.setProperty(key,variables[key]) : root.style.removeProperty(key);
+    root.toggleAttribute("data-store-glass", Boolean(palette?.glassMode && palette.glassMode !== "off"));
+    if (palette) {
+      const colors = palette.midgroundColors?.length ? palette.midgroundColors : [palette.surface2];
+      const stops = colors.map((item,index) => `${item} ${Math.round(index*100/Math.max(1,colors.length-1))}%`).join(",");
+      const gradient = `linear-gradient(${palette.gradientAngle || 0}deg,${stops})`;
+      const imageUrl = palette.backgroundImage?.replace(/["\\]/g, "") || "";
+      const image = palette.imageEnabled && imageUrl ? `,url("${imageUrl}")` : "";
+      document.body.style.backgroundColor = palette.background;
+      document.body.style.backgroundImage = gradient + image;
+      document.body.style.backgroundSize = palette.imageEnabled ? (palette.imageSize === "custom" ? palette.imageSizeCustom || "auto" : palette.imageSize || "auto") : "auto";
+      document.body.style.backgroundRepeat = palette.imageEnabled ? palette.imageRepeat || "no-repeat" : "no-repeat";
+      document.body.style.backgroundPosition = `${palette.imagePositionX || 0}% ${palette.imagePositionY || 0}%`;
+      document.body.style.backgroundAttachment = palette.imageEnabled ? "fixed" : "";
+      root.style.setProperty("--theme-nav-bg", palette.navBackground || palette.surface);
+      root.style.setProperty("--theme-nav-text", palette.navText || palette.text);
+    } else {
+      document.body.style.backgroundColor = ""; document.body.style.backgroundImage = ""; document.body.style.backgroundSize = ""; document.body.style.backgroundRepeat = ""; document.body.style.backgroundPosition = ""; document.body.style.backgroundAttachment = "";
+      root.style.removeProperty("--theme-nav-bg"); root.style.removeProperty("--theme-nav-text");
+    }
+  }, [theme, activeStoreTheme]);
   useEffect(() => {
     document.documentElement.toggleAttribute("data-liquid-glass", liquidGlass);
     try { localStorage.setItem("ij-liquid-glass", liquidGlass ? "1" : "0"); }
@@ -740,11 +771,16 @@ function App() {
       setError(e.message);
     }
   };
+  const chooseBuiltInTheme = (next: Theme) => {
+    setTheme(next); setActiveStoreTheme(null);
+    if (user) api.applyTheme(null).catch(() => {});
+  };
   const logout = () => {
     localStorage.removeItem("ij-token");
     sessionStorage.removeItem("ij-admin-verification");
     sessionStorage.removeItem("ij-admin-verification-expires");
     setAdminVerified(false);
+    setActiveStoreTheme(null);
     setUser(null);
     if (page === "settings") go("home");
   };
@@ -813,11 +849,12 @@ function App() {
         <div className="head-actions">
           {user&&domains.length>0&&<select className="domain-switcher" aria-label="当前域" value={domainId} onChange={(e)=>{localStorage.setItem("ij-domain-id",e.target.value);setDomainId(e.target.value);setSelected(null);}}>{domains.map((domain)=><option key={domain.id} value={domain.id}>{domain.name}</option>)}</select>}
           <div className="theme-switcher" aria-label="主题模式">
-            <button className={theme === "light" ? "active" : ""} title="亮色模式" onClick={() => setTheme("light")}><Sun /></button>
-            <button className={theme === "dark" ? "active" : ""} title="暗色模式" onClick={() => setTheme("dark")}><Moon /></button>
-            <button className={theme === "meteor" ? "active" : ""} title="流星雨模式" onClick={() => setTheme("meteor")}><Sparkles /></button>
-            <button className={theme === "miku" ? "active" : ""} title="初音未来主题" aria-label="初音未来主题" onClick={() => setTheme("miku")}><Music2 /></button>
+            <button className={!activeStoreTheme && theme === "light" ? "active" : ""} title="亮色模式" onClick={() => chooseBuiltInTheme("light")}><Sun /></button>
+            <button className={!activeStoreTheme && theme === "dark" ? "active" : ""} title="暗色模式" onClick={() => chooseBuiltInTheme("dark")}><Moon /></button>
+            <button className={!activeStoreTheme && theme === "meteor" ? "active" : ""} title="流星雨模式" onClick={() => chooseBuiltInTheme("meteor")}><Sparkles /></button>
+            <button className={!activeStoreTheme && theme === "miku" ? "active" : ""} title="初音未来主题" aria-label="初音未来主题" onClick={() => chooseBuiltInTheme("miku")}><Music2 /></button>
           </div>
+          <button className={`theme-store-shortcut ${page === "themes" ? "active" : ""}`} title="主题商店" aria-label="主题商店" onClick={() => go("themes")}><Palette /><span>主题商店</span></button>
           {user ? (
             <div className="user-menu-wrap">
               <button className="user-btn" onClick={() => setUserMenu(!userMenu)}>
@@ -832,6 +869,7 @@ function App() {
                 <button onClick={() => { go("files"); setUserMenu(false); }}><FolderOpen />我的文件</button>
                 <button onClick={() => { go("account"); setUserMenu(false); }}><Wrench />账户设置</button>
                 <button onClick={() => { go("ai-assistant"); setUserMenu(false); }}><Sparkles />AI 助手</button>
+                <button onClick={() => { go("themes"); setUserMenu(false); }}><Palette />主题商店</button>
                 <button onClick={() => { go("customize"); setUserMenu(false); }}><Edit3 />自定义页面</button>
                 <button onClick={() => { go("blog"); setUserMenu(false); }}><NotebookText />博客</button>
                 {can("view_tag") && <button onClick={() => { setTagManagerOpen(true); setUserMenu(false); }}><SlidersHorizontal />Tag 管理</button>}
@@ -964,6 +1002,7 @@ function App() {
         )}{" "}
         {page === "account" && user && <AccountPage user={user} changed={setUser} error={setError} liquidGlass={liquidGlass} setLiquidGlass={setLiquidGlass} compatibility={compatibility} glassTransparency={glassTransparency} setGlassTransparency={setGlassTransparency} glassRefraction={glassRefraction} setGlassRefraction={setGlassRefraction} mascot={mascot} setMascot={setMascot} />}{" "}
         {page === "customize" && user && <CustomizePage user={user} changed={setUser} error={setError} />}{" "}
+        {page === "themes" && <ThemeStorePage user={user} activeId={activeStoreTheme?.id || null} apply={setActiveStoreTheme} error={setError} />}{" "}
         {page === "ai-assistant" && (user ? <AiAssistantPage user={user} error={setError} /> : <section className="page"><div className="settings-panel ai-login-prompt"><Sparkles /><h1>AI 助手</h1><p>登录后即可使用 AI 助手。</p><button className="primary" onClick={() => setAuthOpen(true)}><LogIn />登录</button></div></section>)}{" "}
         {page === "messages" && user && <MessagesPage error={setError} unreadChanged={setUnread} />}{" "}
         {page === "blog" && <BlogPage key={location.pathname} user={user} error={setError} />}{" "}
